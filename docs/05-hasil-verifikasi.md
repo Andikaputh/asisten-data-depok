@@ -196,3 +196,43 @@ Uji live terakhir mencatat metadata **14.563 ms**, rumus **6.165 ms**, satuan **
 Uji sebelumnya mencatat 19–34 detik untuk teks. Kondisi beban mesin, pemuatan model, dan ukuran prompt memengaruhi latensi; angka ini bukan benchmark p95 atau jaminan performa. Model berjalan pada CPU di laptop ini.
 
 Screenshot dan laporan pengujian ada di `.artifacts/` laptop. `.env`, database, salinan mentah, sesi browser, dan keluaran graphify lokal diabaikan Git. Panduan pelaksanaan: [08-checklist-presentasi.md](08-checklist-presentasi.md).
+
+## Pembaruan: asisten navigasi portal 0.3 (29 Oktober 2026)
+
+Revisi mengubah fokus dari empat sumber pilot menjadi pencarian dan navigasi inventaris portal. Korpus angka terverifikasi tetap terpisah dan tidak ditimpa pengumpulan katalog.
+
+Snapshot lokal setelah sinkronisasi:
+
+- **2.242 URL detail dataset**, sesuai label jumlah dataset yang terakhir dibaca; menu Dataset tidak ikut dihitung sebagai dataset.
+- **2.952 entri keseluruhan**, termasuk navigasi, organisasi, kategori, publikasi, infografis, dashboard, dan galeri. Angka ini tidak berarti 2.952 berkas sudah dipahami.
+- Antrean halaman detail dan lampiran yang belum diekstrak tetap dilaporkan. `websiteComplete: false`.
+- URL unduh BPS yang berubah token tidak menggandakan identitas publikasi. Pagination Next yang muncul setelah halaman kosong tidak diikuti tanpa akhir.
+- `robots.txt` tidak berhasil dibaca; ketidakpastian dicatat, bukan dianggap izin. Pengambilan massal/produksi perlu koordinasi pengelola.
+
+Perubahan perilaku:
+
+- Pencarian katalog tanpa LLM; hasil memuat judul, penerbit jika tercantum, jenis, dan tautan yang benar-benar ditemukan.
+- Pertanyaan luar ruang lingkup ditolak sebelum panggilan model. Hasil kosong tidak diartikan sebagai bukti sumber tidak ada di website.
+- Detail HTML yang telah ditemukan dapat dibaca sesuai kebutuhan. Halaman spesifik diprioritaskan dibanding kemunculan judulnya pada daftar metadata lain.
+- Dialog publik dan label–nilai tabel ikut diekstrak; script serta dialog formulir dikecualikan. PDF/XLSX, OCR gambar, dan isi dashboard eksternal belum diinterpretasikan.
+- Vektor yang tampak mirip tetapi berasal dari indikator lain tidak dipakai untuk menjawab topik baru.
+- UI **Cakupan portal** dan ringkasan chat membedakan katalog, HTML terbaca otomatis, dan korpus yang ditinjau lokal.
+- Chat dan embedding dapat memakai provider berbeda. `openai-compatible` diuji dengan server tiruan; identitas embedding juga membedakan endpoint-nya. OAuth inference belum diimplementasikan.
+
+Hasil pengujian lokal revisi:
+
+| Pemeriksaan | Hasil |
+| --- | --- |
+| `npm.cmd run check` | lulus |
+| `npm.cmd test` | 47/47 lulus |
+| `npm.cmd run test:e2e` | 15 pemeriksaan lulus, termasuk cakupan portal dan penolakan topik di browser |
+| `npm.cmd run test:corpus` | 18/18 lulus |
+| `npm.cmd run test:e2e:live` | 12/12 pertanyaan lulus; kartu sumber, reload, cakupan portal desktop/mobile, tanpa pageerror/console error |
+| `npm.cmd run rag:activate` pada revisi 0.3 | 4/4 lulus; dua jawaban teks `generated` + `hybrid`, bukan fallback |
+| Audit dependensi produksi | 0 kerentanan dilaporkan |
+
+Uji pembacaan HTML sungguhan untuk **Proporsi penduduk yang menggunakan internet** berhasil mengambil definisi dari halaman dataset yang tepat, sekitar **700 ms** tanpa generasi model. Statusnya `portal-read`, bukan verifikasi manual. Pada uji browser awal revisi, contoh pencarian katalog selesai sekitar **27–42 ms**, sedangkan jawaban generatif sekitar **10,7–23,6 detik**. Ini pengukuran beberapa contoh pada laptop ini, bukan benchmark akurasi atau p95.
+
+Rincian cakupan dan batas yang belum selesai terdapat pada [09-asisten-portal.md](09-asisten-portal.md). Pengujian yang lulus tidak membuktikan seluruh halaman tak tertaut, berkas, makna jawaban, maupun seluruh variasi pertanyaan sudah tercakup.
+
+Pada uji live final, metadata membutuhkan **19.528 ms**, rumus **10.926 ms**, dan satuan **11.973 ms**. Contoh pencarian anak disabilitas **41 ms**, publikasi kesehatan **27 ms**, dan dashboard sekolah **111 ms**. Pertanyaan resep ditolak tanpa model. Screenshot cakupan tersimpan pada `.artifacts/live-portal-coverage-desktop.png` dan `.artifacts/live-portal-coverage-mobile.png`.

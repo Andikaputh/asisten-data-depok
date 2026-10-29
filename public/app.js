@@ -13,7 +13,7 @@ const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 function hydrateIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML = icon(element.dataset.icon); }); }
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safeUrl = value => { try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : ''; } catch { return ''; } };
-const statusNames = { verified:'Terverifikasi',unverified:'Belum diperiksa',candidate:'Kandidat',demo:'Latihan',withdrawn:'Nonaktif' };
+const statusNames = { verified:'Terverifikasi',unverified:'Belum diperiksa',candidate:'Kandidat',demo:'Latihan',withdrawn:'Nonaktif',catalogued:'Terdaftar di portal','portal-read':'HTML terbaca · belum ditinjau' };
 const badge = status => `<span class="badge ${esc(status)}">${esc(statusNames[status] || status)}</span>`;
 const date = value => value ? new Intl.DateTimeFormat('id-ID', { dateStyle:'medium', timeZone:'Asia/Jakarta' }).format(new Date(value)) : 'Belum diketahui';
 let toastTimer;
@@ -38,18 +38,19 @@ async function api(path, options = {}) {
 const post = (path, body) => api(path, { method:'POST', body:JSON.stringify(body) });
 
 function setView(view) {
-  for (const name of ['chat','sources','pipeline']) $(`#${name}-view`).hidden = name !== view;
+  for (const name of ['chat','sources','pipeline','portal']) $(`#${name}-view`).hidden = name !== view;
   $$('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
-  $('#page-title').textContent = { chat:'Asisten data', sources:'Koleksi sumber', pipeline:'Alur & model' }[view];
+  $('#page-title').textContent = { chat:'Asisten data', sources:'Koleksi sumber', pipeline:'Alur & model',portal:'Cakupan portal' }[view];
   if (view === 'sources') refreshSources().catch(error => toast(error.message));
   if (view === 'pipeline') refreshStatus().catch(error => toast(error.message));
+  if (view === 'portal') refreshPortal().catch(error => toast(error.message));
 }
 
 function setScope(next) {
   if (busy) { toast('Tunggu jawaban selesai sebelum mengganti koleksi.'); return; }
   scope = next; saveLocal('depok:scope:v1', scope);
   $$('[data-scope]').forEach(button => button.classList.toggle('selected', button.dataset.scope === scope));
-  $('#scope-note').innerHTML = `<span class="small-dot"></span>${scope === 'demo' ? 'Mode latihan · panduan aplikasi, bukan statistik resmi' : 'Koleksi publik · hanya sumber yang sudah ditinjau untuk jawaban faktual'}`;
+  $('#scope-note').innerHTML = `<span class="small-dot"></span>${scope === 'demo' ? 'Mode latihan · panduan aplikasi, bukan statistik resmi' : 'Koleksi publik · katalog dan halaman portal; angka memerlukan tabel yang ditinjau'}`;
 }
 
 function renderHistory() {
@@ -65,6 +66,12 @@ function renderHistory() {
       node.innerHTML = `<div class="assistant-label"><img src="/favicon.svg" alt="">Asisten Data <span class="badge ${response.scope === 'demo' ? 'demo' : ''}">${response.scope === 'demo' ? 'Latihan' : 'Koleksi publik'}</span></div><p class="message-text">${esc(response.answer)}</p>${response.excerpts?.length ? `<ul class="excerpts">${response.excerpts.map(excerpt => `<li>${esc(excerpt.text)}<button class="cite-button" data-source-id="${esc(response.sources?.[excerpt.sourceIndex - 1]?.documentId || '')}" aria-label="Lihat sumber ${esc(excerpt.sourceIndex)}">${esc(excerpt.sourceIndex)}</button></li>`).join('')}</ul>` : ''}${response.sources?.length ? `<div class="answer-sources">${response.sources.map((source, index) => `<button class="answer-source" data-source-id="${esc(source.documentId)}">${badge(source.status)}<strong>${index + 1}. ${esc(source.title)}</strong><small>${esc(source.publisher)}${source.rowNumber ? ` · Baris ${esc(source.rowNumber)}` : ''}</small></button>`).join('')}</div>` : ''}<div class="answer-meta"><span>${response.method === 'structured' ? 'Pembacaan tabel' : response.method === 'hybrid' ? 'Pencarian hybrid' : 'Pencarian kata kunci'}</span><span>${response.mode === 'generated' ? (response.provider === 'ollama' ? 'Jawaban disusun model lokal' : 'Jawaban disusun model') : response.mode === 'model-assisted' ? 'Pemilihan bukti oleh model lokal' : 'Jawaban ekstraktif'}</span>${typeof response.elapsedMs === 'number' ? `<span>${(response.elapsedMs / 1000).toFixed(1)} detik</span>` : ''}</div>${response.notice ? `<p class="answer-notice">${esc(response.notice)}</p>` : ''}`;
     }
     $('#messages').append(node);
+    if(item.role==='assistant') {
+      const method=node.querySelector('.answer-meta span');
+      const labels={'portal-catalogue':'Pencarian katalog portal','portal-content':'Pembacaan halaman portal','portal-navigation':'Panduan navigasi','portal-coverage':'Cakupan indeks','scope-guard':'Batas ruang lingkup'};
+      if(method && labels[item.response?.method])method.textContent=labels[item.response.method];
+      if(item.response?.mode==='model-assisted' && item.response.provider!=='ollama')node.querySelectorAll('.answer-meta span')[1].textContent='Bukti dipilih model';
+    }
   }
   if (busy) {
     const pending = document.createElement('div'); pending.className = 'message';
@@ -107,14 +114,17 @@ async function refreshStatus() {
   $('#verified-count').textContent = counts.verified;
   $('#meter-fill').style.width = `${Math.min(100, counts.verified / 20 * 100)}%`;
   $('#stats-grid').innerHTML = [[counts.verified,'Publik terverifikasi'],[counts.unverified,'Menunggu pemeriksaan'],[counts.candidate,'Kandidat portal']].map(([n,label]) => `<div class="stat-card"><strong>${n}</strong><span>${label}</span></div>`).join('');
-  const cloud=model.provider==='openai';
-  $('#model-badge').textContent = cloud ? (model.keyConfigured ? 'OpenAI · kunci terisi' : 'OpenAI · kunci belum diisi') : model.online ? 'Ollama terhubung' : 'Ollama belum berjalan';
+  const cloud=model.provider!=='ollama',providerName=model.provider==='openai'?'OpenAI':model.provider==='openai-compatible'?'API kompatibel OpenAI':'Ollama';
+  $('#model-badge').textContent = cloud ? `${providerName} · ${model.keyConfigured?'kunci terisi':'kunci belum diisi'}` : model.online ? 'Ollama terhubung' : 'Ollama belum berjalan';
   $('#model-badge').className = `badge ${model.chatReady ? 'verified' : ''}`;
   $('#model-detail').innerHTML = `<div class="model-info-grid"><div class="model-info"><span>MODEL JAWABAN · ${cloud?'OPENAI API':'OLLAMA'}</span><strong>${esc(model.chatModel || 'Belum dikonfigurasi')}${model.chatModel ? (model.chatReady ? ' · dikonfigurasi' : ' · belum siap') : ''}</strong></div><div class="model-info"><span>MODEL EMBEDDING</span><strong>${esc(model.embeddingModel || 'Belum dikonfigurasi')}${model.embeddingModel ? (model.embeddingReady ? ' · dikonfigurasi' : ' · belum siap') : ''}</strong></div></div>`;
   $('#use-model').disabled = !model.chatReady && !model.embeddingReady;
   if ($('#use-model').disabled && useModel) { useModel = false; saveLocal('depok:model:v1', false); }
   $('#use-model').checked = useModel;
-  $('#engine-label').textContent = useModel ? `LLM · ${cloud?'OpenAI API':'Ollama'}` : 'Pencarian lokal · tanpa API';
+  $('#engine-label').textContent = useModel ? `LLM · ${providerName}` : 'Pencarian lokal · tanpa API';
+  $('#model-detail').querySelector('.model-info span').textContent=`MODEL JAWABAN · ${providerName.toUpperCase()}`;
+  $('#model-detail').querySelectorAll('.model-info span')[1].textContent=`MODEL EMBEDDING · ${(model.embeddingProvider || model.provider).toUpperCase()}`;
+  $('#portal-nav-count').textContent=status.portal?.items || 0;
   $('#reindex-button').disabled = !model.embeddingReady || status.reindexing;
   $('#check-rag-button').disabled = !model.chatReady || !counts.verified || status.reindexing;
   $('#sync-sources-button').disabled = status.syncing;
@@ -179,8 +189,47 @@ async function openSource(id) {
       try { await post(`/api/sources/${encodeURIComponent(id)}/withdraw`, {}); await refreshSources(); await openSource(id); toast('Sumber dinonaktifkan. Riwayat lama tetap perlu diperiksa ulang.'); }
       catch (error) { toast(error.message); if ($('#withdraw-source')) $('#withdraw-source').disabled = false; }
     });
+    if(['catalogued','portal-read'].includes(source.status)) {
+      const note=document.createElement('p');note.className='verification-warn';
+      note.textContent=`Inventaris portal · ${source.contentStatus==='read'?'halaman HTML sudah dibaca otomatis, belum ditinjau manual':'hanya katalog/tautan; isi berkas belum dibaca'}. ${source.format || 'HTML'}${source.periodLabel?` · periode yang tertulis di katalog: ${source.periodLabel}`:''}. Ini bukan bukti nilai observasi statistik.`;
+      $('#dialog-content').prepend(note);
+    }
   } catch (error) { toast(error.message); }
 }
+
+let portalOffset=0,portalTotal=0,portalTimer,portalSearchTimer;
+async function refreshPortal() {
+  clearTimeout(portalTimer);
+  const query=$('#portal-query').value.trim(),section=$('#portal-section').value;
+  const params=new URLSearchParams({limit:'20',offset:String(portalOffset)});
+  if(section)params.set('section',section);if(query)params.set('q',query);
+  const [coverage,result]=await Promise.all([api('/api/portal/status'),api(`/api/portal/${query?'search':'items'}?${params}`)]);
+  portalTotal=result.total ?? result.items.length;
+  const read=coverage.contentPages || 0;
+  const stats=[[`${coverage.datasets} / ${coverage.reportedDatasets || '—'}`,'URL dataset / label jumlah portal'],[coverage.items,'Entri termasuk navigasi'],[read,'Panduan/detail/galeri HTML terbaca'],[coverage.unreadAttachments,'Lampiran belum diekstrak']];
+  $('#portal-stats').innerHTML=stats.map(([value,label])=>`<div class="stat-card"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
+  $('#portal-nav-count').textContent=coverage.items;
+  const run=coverage.lastRun;
+  $('#portal-progress').textContent=`${coverage.running?'Sedang berjalan. ':''}${run?`Batch terakhir: ${run.status}, ${run.processed} halaman, ${run.failed} gagal. ${run.note}`:'Belum ada sinkronisasi.'} Antrean: ${coverage.pending}; gagal/dibatasi: ${coverage.failed+coverage.blocked}; sebagian: ${coverage.partial}.`;
+  $('#portal-policy').textContent=`Seluruh website belum dinyatakan selesai dipahami. Robots: ${coverage.robots}. Tautan eksternal: ${coverage.external}; halaman kosong: ${coverage.empty}; pagination dilewati: ${coverage.skipped}.`;
+  $('#portal-sync-button').disabled=coverage.running;$('#portal-refresh-button').disabled=coverage.running;$('#portal-stop-button').disabled=!coverage.running;
+  $('#portal-items').innerHTML=result.items.length?result.items.map(item=>`<article class="source-row"><span class="source-file-icon">${icon('file')}</span><div class="source-info"><h3>${esc(item.title)}</h3><p>${esc(item.publisher)} · ${esc(item.kind)} · ${esc(item.format)}${item.periodLabel?` · periode katalog ${esc(item.periodLabel)}`:''}</p></div><div class="source-row-actions">${badge(item.status)}<button class="icon-button" data-source-id="${esc(item.documentId)}" aria-label="Buka ${esc(item.title)}">${icon('arrow-up-right')}</button></div></article>`).join(''):'<p class="empty-state">Belum ada entri yang cocok. Hasil kosong bukan berarti sumber tidak ada di website.</p>';
+  $('#portal-page-note').textContent=query?`${result.items.length} hasil paling relevan`:`${portalTotal?portalOffset+1:0}–${Math.min(portalOffset+20,portalTotal)} dari ${portalTotal} entri`;
+  $('#portal-prev').disabled=Boolean(query) || portalOffset===0;$('#portal-next').disabled=Boolean(query) || portalOffset+20>=portalTotal;
+  $('#portal-issues').innerHTML=coverage.issues.length?`<ul class="portal-issues">${coverage.issues.map(issue=>`<li><strong>${esc(issue.status)}</strong> — ${esc(issue.error)} ${safeUrl(issue.url)?`<a href="${esc(safeUrl(issue.url))}" target="_blank" rel="noopener noreferrer">Buka sumber</a>`:''}</li>`).join('')}</ul>`:'<p>Belum ada kegagalan yang tercatat. Ini bukan bukti seluruh sumber telah diproses.</p>';
+  if(coverage.running && !$('#portal-view').hidden)portalTimer=setTimeout(()=>refreshPortal().catch(error=>toast(error.message)),3000);
+}
+async function startPortalSync(refresh=false) {
+  try {await post('/api/portal/sync',{maxPages:40,includeDetails:$('#portal-details').checked,refresh});await refreshPortal();toast('Sinkronisasi berjalan bertahap; sumber yang gagal tetap tercatat.');}
+  catch(error){toast(error.message);}
+}
+$('#portal-sync-button').addEventListener('click',()=>startPortalSync());
+$('#portal-refresh-button').addEventListener('click',()=>startPortalSync(true));
+$('#portal-stop-button').addEventListener('click',async()=>{try{await post('/api/portal/sync/cancel',{});await refreshPortal();}catch(error){toast(error.message);}});
+$('#portal-query').addEventListener('input',()=>{clearTimeout(portalSearchTimer);portalOffset=0;portalSearchTimer=setTimeout(()=>refreshPortal().catch(error=>toast(error.message)),300);});
+$('#portal-section').addEventListener('change',()=>{portalOffset=0;refreshPortal().catch(error=>toast(error.message));});
+$('#portal-prev').addEventListener('click',()=>{portalOffset=Math.max(0,portalOffset-20);refreshPortal().catch(error=>toast(error.message));});
+$('#portal-next').addEventListener('click',()=>{portalOffset+=20;refreshPortal().catch(error=>toast(error.message));});
 
 document.addEventListener('click', event => {
   const view = event.target.closest('[data-view]'); if (view) setView(view.dataset.view);
@@ -198,7 +247,7 @@ $('#new-chat').addEventListener('click', newChat);
 $('#import-button').addEventListener('click', openImport);
 $('#source-search').addEventListener('input', renderSources);
 $('#refresh-status').addEventListener('click', () => refreshStatus().then(() => toast('Status koneksi diperbarui.')).catch(error => toast(error.message)));
-$('#use-model').addEventListener('change', event => { useModel = event.target.checked; saveLocal('depok:model:v1', useModel); $('#engine-label').textContent = useModel ? `LLM · ${status?.model?.provider==='openai'?'OpenAI API':'Ollama'}` : 'Pencarian lokal · tanpa API'; });
+$('#use-model').addEventListener('change', event => { useModel = event.target.checked; saveLocal('depok:model:v1', useModel); $('#engine-label').textContent = useModel ? `LLM · ${status?.model?.provider==='openai'?'OpenAI API':status?.model?.provider==='openai-compatible'?'API kompatibel OpenAI':'Ollama'}` : 'Pencarian lokal · tanpa API'; });
 $('#check-rag-button').addEventListener('click',async()=>{
   const button=$('#check-rag-button');button.disabled=true;$('#rag-diagnostics').textContent='Membangun indeks dan menguji pertanyaan dengan LLM asli…';
   try{const result=await post('/api/rag/check',{});$('#rag-diagnostics').textContent=result.ok?`Uji LLM berhasil: ${result.answer.mode}, ${result.answer.sources.length} sumber. ${result.answer.answer}`:`Uji belum berhasil. ${result.answer.notice || result.answer.answer}`;toast(result.ok?'RAG berhasil diuji dengan LLM asli.':'LLM belum menghasilkan jawaban terverifikasi.');}
@@ -222,7 +271,7 @@ refreshSources().then(async () => {
   const params = new URLSearchParams(location.search);
   const question = params.get('question');
   const source = params.get('source');
-  if (params.get('view') === 'sources') setView('sources');
+    if (['sources','portal','pipeline'].includes(params.get('view'))) setView(params.get('view'));
   if (source && /^[a-zA-Z0-9-]+$/.test(source)) await openSource(source);
   if (question) { window.history.replaceState(null,'','/workspace'); await sendQuestion(question); }
 }).catch(error => { toast(`Koneksi server gagal: ${error.message}`); $('#model-badge').textContent = 'Server tidak terhubung'; });

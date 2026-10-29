@@ -5,9 +5,11 @@ import { dirname, join, extname } from 'node:path';
 import { createStore } from './store.js';
 import { UserError, validateImport } from './import.js';
 import { answerQuestion } from './chat.js';
-import { modelConfig, modelStatus, providerError } from './model.js';
+import { modelConfig, modelStatus, providerError, embeddingsReady, modelReady } from './model.js';
 import { indexCorpus, indexStatus } from './indexing.js';
 import { syncPublicSources, importPublicWasteCsv } from './public-sources.js';
+import {syncPortal,PORTAL_SECTIONS} from './portal-sync.js';
+import {coverageSummary} from './portal-chat.js';
 
 const publicDirectory = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.csv': 'text/csv; charset=utf-8' };
@@ -29,8 +31,10 @@ function summary(document) {
   return { ...rest, contentLength: content.length };
 }
 
-export function createApp({ store = createStore(), config:fixedConfig } = {}) {
+export function createApp({ store = createStore(), config:fixedConfig, portalFetcher=fetch } = {}) {
   let reindexing = false, syncing = false, chatRequests = 0;
+  let portalController=null,portalTask=null;
+  store.portal.recoverRuns();
   const server = createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -44,11 +48,41 @@ export function createApp({ store = createStore(), config:fixedConfig } = {}) {
       const { pathname } = url;
       if (req.headers.origin && req.headers.origin !== `http://${host}`) throw new UserError('Origin tidak diizinkan.', 403);
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new UserError('Permintaan lintas situs tidak diizinkan.', 403);
-      if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: '0.2.0' });
+      if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: '0.3.0' });
       if (pathname === '/api/status' && req.method === 'GET') {
         const documents = store.list();
         const counts = Object.fromEntries(['candidate','unverified','verified','demo','withdrawn'].map(status => [status, documents.filter(d => d.status === status).length]));
-        return json(res, 200, { counts, observations: store.observations().length, chunks: store.activeChunks('verified').length, model: await modelStatus(config), reindexing,rag:{index:indexStatus(store,config),recentRuns:store.recentRuns()},syncing });
+        return json(res, 200, { counts, observations: store.observations().length, chunks: store.activeChunks('verified').length, model: await modelStatus(config), reindexing,rag:{index:indexStatus(store,config),recentRuns:store.recentRuns()},syncing,portal:store.portal.coverage() });
+      }
+      if(pathname==='/api/portal/status' && req.method==='GET')return json(res,200,{...store.portal.coverage(),running:Boolean(portalController) || store.portal.coverage().lastRun?.status==='running'});
+      if(pathname==='/api/portal/search' && req.method==='GET') {
+        const query=url.searchParams.get('q') || '',section=url.searchParams.get('section') || undefined;
+        if(query.length>2000 || (section && !PORTAL_SECTIONS.some(item=>item[0]===section)))throw new UserError('Pencarian atau bagian portal tidak valid.');
+        const items=store.portal.search(query,{limit:10,section});
+        return json(res,200,{items:items.map(item=>store.portal.card(item)),coverage:coverageSummary(store)});
+      }
+      if(pathname==='/api/portal/items' && req.method==='GET') {
+        const limit=Number(url.searchParams.get('limit') || 20),offset=Number(url.searchParams.get('offset') || 0),section=url.searchParams.get('section') || undefined;
+        if(!Number.isInteger(limit) || limit<1 || limit>100 || !Number.isInteger(offset) || offset<0 || (section && !PORTAL_SECTIONS.some(item=>item[0]===section)))throw new UserError('Pagination inventaris tidak valid.');
+        const result=store.portal.browse({limit,offset,section});
+        return json(res,200,{total:result.total,items:result.items.map(item=>store.portal.card(item)),coverage:coverageSummary(store)});
+      }
+      if(pathname==='/api/portal/sync' && req.method==='POST') {
+        const body=await readJson(req);
+        if(!body || typeof body!=='object' || Array.isArray(body))throw new UserError('Isi permintaan sinkronisasi tidak valid.');
+        const maxPages=body.maxPages ?? 40;
+        if(!Number.isInteger(maxPages) || maxPages<1 || maxPages>150 || (body.includeDetails!==undefined && typeof body.includeDetails!=='boolean') || (body.refresh!==undefined && typeof body.refresh!=='boolean'))throw new UserError('Batch portal harus 1–150 halaman; opsi detail/refresh berupa boolean.');
+        store.portal.recoverRuns();
+        if(portalController || store.portal.coverage().lastRun?.status==='running')throw new UserError('Sinkronisasi portal sedang berjalan; tidak memulai job ganda.',409);
+        portalController=new AbortController();
+        portalTask=syncPortal(store,{fetcher:portalFetcher,maxPages,includeDetails:body.includeDetails===true,refresh:body.refresh===true,signal:portalController.signal})
+          .catch(()=>{}).finally(()=>{portalController=null;portalTask=null;});
+        return json(res,202,{accepted:true,note:'Sinkronisasi berjalan di belakang layar; periksa cakupan dan kegagalan pada status portal.'});
+      }
+      if(pathname==='/api/portal/sync/cancel' && req.method==='POST') {
+        await readJson(req);
+        if(!portalController)throw new UserError('Tidak ada sinkronisasi milik server ini. Jika memakai CLI, hentikan dari terminalnya.',409);
+        portalController.abort();return json(res,202,{accepted:true});
       }
       if (pathname === '/api/sources' && req.method === 'GET') return json(res, 200, { sources: store.list().map(summary) });
       if (pathname === '/api/export' && req.method === 'GET') {
@@ -64,7 +98,7 @@ export function createApp({ store = createStore(), config:fixedConfig } = {}) {
       const documentMatch = pathname.match(/^\/api\/sources\/([a-zA-Z0-9-]+)(?:\/(verify|withdraw))?$/);
       if (documentMatch) {
         const [, id, action] = documentMatch;
-        const document = store.get(id);
+        const document = store.get(id) || store.portal.source(id);
         if (!document) throw new UserError('Sumber tidak ditemukan.', 404);
         if (!action && req.method === 'GET') return json(res, 200, { source: document });
         if (action === 'verify' && req.method === 'POST') {
@@ -86,12 +120,12 @@ export function createApp({ store = createStore(), config:fixedConfig } = {}) {
         if (body.previousQuestion !== undefined && (typeof body.previousQuestion !== 'string' || body.previousQuestion.length > 2000)) throw new UserError('Konteks pertanyaan tidak valid.');
         if (chatRequests >= 3) throw new UserError('Sedang memproses pertanyaan lain. Coba lagi sebentar.', 429);
         chatRequests++;
-        try { return json(res, 200, await answerQuestion(store, { question: body.question.trim(), scope: body.scope || 'verified', useModel: body.useModel !== false, previousQuestion: body.previousQuestion || '' }, config)); }
+        try { return json(res, 200, await answerQuestion(store, { question: body.question.trim(), scope: body.scope || 'verified', useModel: body.useModel !== false, previousQuestion: body.previousQuestion || '',readPortalOnDemand:true,portalFetcher }, config)); }
         finally { chatRequests--; }
       }
       if (pathname === '/api/reindex' && req.method === 'POST') {
         await readJson(req);
-        if (!config.embeddingModel || config.provider==='openai' && !config.apiKey) throw new UserError('Konfigurasi embedding belum siap. Isi OPENAI_API_KEY di .env atau jalankan Ollama dengan model embedding.');
+        if (!embeddingsReady(config)) throw new UserError('Konfigurasi embedding belum siap. Isi kunci provider embedding atau jalankan Ollama dengan model embedding.');
         if (reindexing) throw new UserError('Pengindeksan sedang berjalan.', 409);
         reindexing = true;
         try {
@@ -110,7 +144,7 @@ export function createApp({ store = createStore(), config:fixedConfig } = {}) {
       }
       if(pathname==='/api/rag/check' && req.method==='POST') {
         await readJson(req);
-        if(config.provider==='openai' && !config.apiKey)throw new UserError('OPENAI_API_KEY belum diisi pada .env. Kunci tidak perlu dikirim melalui chat.');
+        if(!modelReady(config))throw new UserError('Model jawaban atau kunci API belum dikonfigurasi. Kunci tidak perlu dikirim melalui chat.');
         if(!store.activeChunks('verified').some(chunk=>chunk.kind==='metadata'))throw new UserError('Belum ada metadata publik terverifikasi untuk pengujian.');
         if(reindexing)throw new UserError('Pengindeksan sedang berjalan.',409);
         reindexing=true;
@@ -124,7 +158,7 @@ export function createApp({ store = createStore(), config:fixedConfig } = {}) {
       if (pathname.startsWith('/api/')) throw new UserError('Endpoint atau metode tidak ditemukan.', 404);
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new UserError('Metode tidak diizinkan.', 405);
       const files = { '/': 'index.html', '/chat': 'chat.html', '/chat/': 'chat.html', '/workspace': 'workspace.html', '/full-chat.js': 'full-chat.js', '/full-chat.css': 'full-chat.css', '/app.js': 'app.js', '/portal.js': 'portal.js', '/portal.css': 'portal.css', '/styles.css': 'styles.css', '/chat-theme.css': 'chat-theme.css', '/favicon.svg': 'favicon.svg', '/contoh-format.csv': 'contoh-format.csv', '/assets/logo-sadepok.png': 'assets/logo-sadepok.png', '/assets/hero-illustration.svg': 'assets/hero-illustration.svg' };
-      const file = files[pathname];
+      const file = pathname==='/portal-assistant.css'?'portal-assistant.css':files[pathname];
       if (!file) throw new UserError('Halaman tidak ditemukan.', 404);
       const content = await readFile(join(publicDirectory, file));
       res.writeHead(200, { 'Content-Type': mime[extname(file)], 'Cache-Control': 'no-cache' });
@@ -138,14 +172,14 @@ export function createApp({ store = createStore(), config:fixedConfig } = {}) {
     }
   });
   server.requestTimeout = 120_000;
-  return { server, store };
+  return { server, store,stopPortalSync:async()=>{portalController?.abort();if(portalTask)await portalTask;} };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { server, store } = createApp();
+  const { server, store,stopPortalSync } = createApp();
   const port = Number(process.env.PORT || 3000);
   server.listen(port, '127.0.0.1', () => console.log(`Asisten Data Depok siap: http://127.0.0.1:${server.address().port}`));
   server.on('error', error => { console.error(error.code === 'EADDRINUSE' ? `Port ${port} sedang dipakai. Ubah PORT di .env.` : error.message); process.exitCode = 1; store.close(); });
-  const stop = () => server.close(() => { store.close(); process.exit(0); });
+  const stop = () => server.close(async () => { await stopPortalSync();store.close(); process.exit(0); });
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
 }

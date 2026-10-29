@@ -42,7 +42,7 @@ export async function retrieve(store, question, scope, embedQuery) {
   const topicHits=row=>topics.filter(term=>tokens(`${row.title} ${row.publisher} ${row.text}`).includes(term)).length;
   if(topics.length)lexical=lexical.filter(row=>topicHits(row)>=Math.min(2,topics.length));
   let semantic = [], warning = '';
-  const semanticCandidates=embedQuery?store.activeChunks(scope).filter(row=>row.vector && row.embeddingModel===embedQuery.model && fits(row) && (!generalMetadata || normalize(row.title).includes('metadata'))):[];
+  const semanticCandidates=embedQuery?store.activeChunks(scope).filter(row=>row.vector && row.embeddingModel===embedQuery.model && fits(row) && (!generalMetadata || normalize(row.title).includes('metadata')) && (!topics.length || topicHits(row)>=Math.min(2,topics.length))):[];
   if (embedQuery && semanticCandidates.length) {
     try {
       const queryVector = await embedQuery(question);
@@ -66,13 +66,13 @@ export function rankSentences(hits, question) {
     return parts.map((text, i) => {
       let score=tokens(text).filter(t=>terms.includes(t)).length;
       if(/rumus|hitung/i.test(question) && /^Metode\s*\/\s*Rumus/i.test(text))score+=8;
-      if(/satuan/i.test(question) && /^Satuan:/i.test(text))score+=6;
-      if(/definisi|apa itu|pengertian|arti/i.test(question) && (/^Definisi:/i.test(text) || /^Metadata adalah/i.test(text)))score+=5;
-      if(/interpretasi|makna/i.test(question) && /^Interpretasi:/i.test(text))score+=6;
-      if(/kapan|tanggal|pembaruan|diperbarui/i.test(question) && /^Dataset Diperbarui:/i.test(text))score+=6;
+      if(/satuan/i.test(question) && /^Satuan(?::|\s)/i.test(text))score+=6;
+      if(/definisi|apa itu|pengertian|arti/i.test(question) && (/^Definisi(?::|\s)/i.test(text) || /^Metadata adalah/i.test(text)))score+=5;
+      if(/interpretasi|makna/i.test(question) && /^Interpretasi(?::|\s)/i.test(text))score+=6;
+      if(/kapan|tanggal|pembaruan|diperbarui/i.test(question) && /^Dataset Diperbarui(?::|\s)/i.test(text))score+=6;
       return {id:`${hit.id}/s${i}`,evidenceId:hit.id,text:text.trim(),source:hit,score};
     });
-  }).filter(s => (s.text.length>20 || s.text.length>8 && /^(Satuan|Ukuran|Level Estimasi|Konsep):/i.test(s.text)) && s.score > 0 && normalize(s.text)!==normalize(s.source.title) && !/^Dataset:/i.test(s.text));
+  }).filter(s => (s.text.length>20 || s.text.length>8 && /^(Satuan|Ukuran|Level Estimasi|Konsep)(?::|\s)/i.test(s.text)) && s.score > 0 && normalize(s.text)!==normalize(s.source.title) && !/^Dataset:/i.test(s.text));
   const seen = new Set();
   return sentences.sort((a,b) => b.score - a.score).filter(s => { if (seen.has(s.text)) return false; seen.add(s.text); return true; }).slice(0, 12);
 }

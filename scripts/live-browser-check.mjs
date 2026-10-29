@@ -34,6 +34,12 @@ try {
     {question:'Berapa persentase penanganan sampah di Kota Depok tahun 2025?',mode:'extractive',contains:/2025: 53,09 persen/},
     {question:'Kalau 2024?',mode:'extractive',contains:/2024: 39 persen/},
     {question:'Berapa jumlah penduduk Kota Depok tahun 2099?',status:'insufficient_evidence'},
+    {question:'Ada data anak disabilitas?',status:'discovery',method:'portal-catalogue',contains:/disabilitas/i},
+    {question:'Cari publikasi kesehatan',status:'discovery',method:'portal-catalogue',contains:/Profil Kesehatan/i},
+    {question:'Cari dashboard sekolah',status:'discovery',method:'portal-catalogue',contains:/sekolah/i},
+    {question:'Buatkan resep nasi goreng',status:'out_of_scope',method:'scope-guard'},
+    {question:'Cari dataset zzz-topik-tidak-ada-xyz',status:'insufficient_evidence',method:'portal-catalogue',contains:/tidak berarti/},
+    {question:'Apakah kamu sudah memahami seluruh website?',status:'assistance',method:'portal-coverage',contains:/bukan berarti semua/i},
   ];
   for(const item of cases) {
     await page.locator('#question').fill(item.question);
@@ -44,6 +50,8 @@ try {
     const answer=await response.json();
     report.cases.push({question:item.question,status:answer.status,mode:answer.mode,provider:answer.provider,method:answer.method,elapsedMs:answer.elapsedMs,answer:answer.answer});
     assert.equal(answer.status,item.status || 'answered');
+    if(item.method)assert.equal(answer.method,item.method);
+    if(item.status==='out_of_scope')assert.deepEqual(answer.sources,[]);
     if(item.mode)assert.equal(answer.mode,item.mode,'Fallback tidak dihitung sebagai generasi berhasil.');
     if(item.contains)assert.match(answer.answer,item.contains);
     if(item.mode==='generated') {
@@ -66,9 +74,19 @@ try {
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:'.artifacts/live-ollama-mobile.png'});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto(base+'/workspace?view=portal');
+  await page.locator('#portal-stats').filter({hasText:'URL dataset'}).waitFor();
+  assert.match(await page.locator('#portal-policy').innerText(),/belum dinyatakan/);
+  await page.locator('#portal-query').fill('disabilitas');
+  await page.locator('#portal-items .source-row').first().waitFor();
+  await page.screenshot({path:'.artifacts/live-portal-coverage-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:'.artifacts/live-portal-coverage-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
   report.ok=true;
-  console.log('PASS Sumber asli, riwayat setelah reload, mobile tanpa overflow, browser bersih.');
+  console.log('PASS Sumber asli, riwayat, cakupan portal desktop/mobile, tanpa overflow, browser bersih.');
 } catch(error) {
   report.error=error.message;
   process.exitCode=1;

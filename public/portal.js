@@ -27,7 +27,7 @@ function showToast(message) {
   toast.textContent = message; toast.hidden = false; clearTimeout(showToast.timer); showToast.timer = setTimeout(() => { toast.hidden = true; }, 4500);
 }
 let sources = [], catalogFailed = false, tab = 'all', query = '', busy = false, opened = false, returnFocus, historyMemory = [];
-const labels = {verified:'Terverifikasi',candidate:'Kandidat sumber',unverified:'Belum diperiksa'};
+const labels = {verified:'Terverifikasi',candidate:'Kandidat sumber',unverified:'Belum diperiksa',catalogued:'Terdaftar di portal','portal-read':'HTML terbaca'};
 function renderCatalog() {
   const visible = sources.filter(source => (tab === 'all' || (tab === 'metadata' ? ['metadata','text','csv'].includes(source.kind) : source.kind === 'catalog')) && `${source.title} ${source.description} ${source.publisher}`.toLocaleLowerCase('id').includes(query.toLocaleLowerCase('id')));
   $('#catalog-count').textContent = `${visible.length} sumber dalam prototipe`;

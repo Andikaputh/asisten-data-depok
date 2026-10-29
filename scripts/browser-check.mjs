@@ -87,6 +87,29 @@ try {
   assert.equal(await mobile.locator('#use-model').isDisabled(),true);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
   console.log('PASS Mobile 390px: percakapan, navigasi, koleksi, pengaturan, tanpa overflow');
+  const portal=store.portal;
+  portal.putItem({url:'https://satudata.depok.go.id/User/detail_dataset/fixture-anak',title:'Jumlah Anak Penyandang Disabilitas',section:'dataset',publisher:'Instansi pengujian',description:'Entri katalog pengujian; isi belum dibaca.',discoveredFrom:'https://satudata.depok.go.id/User/dataset'});
+  await mobile.locator('.nav-item[data-view="portal"]').click();
+  await mobile.locator('#portal-stats').filter({hasText:'Lampiran belum diekstrak'}).waitFor();
+  await mobile.locator('#portal-query').fill('anak disabilitas');
+  await mobile.locator('#portal-items .source-row').filter({hasText:'Jumlah Anak Penyandang Disabilitas'}).waitFor();
+  await mobile.locator('#portal-items .icon-button').first().click();
+  await mobile.locator('#dialog-content .verification-warn').filter({hasText:'Inventaris portal'}).waitFor();
+  assert.equal(await mobile.locator('#verify-button').count(),0);
+  await mobile.locator('.dialog-header .close-dialog').click();
+  assert.equal(await mobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  console.log('PASS Cakupan portal mobile: pencarian inventaris, status katalog, tanpa verifikasi palsu atau overflow');
+
+  await page.goto(base+'/chat');
+  await page.locator('#portal-coverage').waitFor({state:'visible'});
+  await page.locator('#scope-select').selectOption('verified');
+  await page.locator('#question').fill('Ada data anak disabilitas?');await page.locator('#send-button').click();
+  await page.locator('.message-assistant .message-text').last().filter({hasText:'Saya menemukan entri terkait'}).waitFor();
+  assert.match(await page.locator('.message-assistant').last().innerText(),/Terdaftar di portal/);
+  await page.locator('#question').fill('Buatkan resep nasi goreng');await page.locator('#send-button').click();
+  await page.locator('.message-assistant .message-text').last().filter({hasText:'khusus membantu pencarian'}).waitFor();
+  assert.equal(await page.locator('.message-assistant').last().locator('.answer-source').count(),0);
+  console.log('PASS Full chat: menemukan sumber portal dan menolak pertanyaan luar ruang lingkup');
   assert.deepEqual(errors,[]);
   console.log('PASS Tidak ada pageerror atau console error. Screenshot tersimpan di .artifacts/');
 } finally {

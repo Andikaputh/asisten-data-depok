@@ -1,12 +1,12 @@
 import {writeFile,mkdir} from 'node:fs/promises';
 import {createStore} from '../server/store.js';
-import {modelConfig,modelReady,embeddingsReady,modelStatus,providerError} from '../server/model.js';
+import {modelConfig,modelReady,embeddingsReady,embeddingConfig,modelStatus,providerError} from '../server/model.js';
 import {indexCorpus} from '../server/indexing.js';
 import {answerQuestion} from '../server/chat.js';
 
 const local=(code,message)=>Object.assign(new Error(message),{code,local:true});
 const store=createStore(),config=modelConfig();
-const report={createdAt:new Date().toISOString(),provider:config.provider,model:config.chatModel,embeddingModel:config.embeddingModel,testKind:'live_provider_required',llmResponseObserved:false,ok:false,cases:[]};
+const report={createdAt:new Date().toISOString(),provider:config.provider,model:config.chatModel,embeddingProvider:embeddingConfig(config).provider,embeddingModel:config.embeddingModel,testKind:'live_provider_required',llmResponseObserved:false,ok:false,cases:[]};
 try {
   const status=await modelStatus(config);
   report.status={online:status.online,chatReady:status.chatReady,embeddingReady:status.embeddingReady,installedModels:status.models};
@@ -14,10 +14,9 @@ try {
     if(!status.online)throw local('ollama_offline',`Ollama tidak berjalan di ${config.baseUrl}. Jalankan Ollama lalu ulangi.`);
     if(!config.chatModel)throw local('missing_chat_model','OLLAMA_CHAT_MODEL belum diisi pada .env.');
     if(!status.chatReady)throw local('missing_chat_model',`Model jawaban "${config.chatModel}" belum terpasang. Jalankan: ollama pull ${config.chatModel}`);
-    if(!embeddingsReady(config))throw local('missing_embedding_model','OLLAMA_EMBED_MODEL belum diisi pada .env.');
-    if(!status.embeddingReady)throw local('missing_embedding_model',`Model embedding "${config.embeddingModel}" belum terpasang. Jalankan: ollama pull ${config.embeddingModel}`);
   } else if(!modelReady(config)) throw Object.assign(new Error('API key belum tersedia.'),{code:'missing_key'});
   if(!embeddingsReady(config)) throw Object.assign(new Error('Konfigurasi embedding belum tersedia.'),{code:'missing_key'});
+  if(embeddingConfig(config).provider==='ollama' && !status.embeddingReady)throw local('missing_embedding_model',`Model embedding "${config.embeddingModel}" belum terpasang atau Ollama embedding tidak berjalan. Periksa EMBED_PROVIDER/EMBED_BASE_URL, lalu: ollama pull ${config.embeddingModel}`);
 
   report.index=await indexCorpus(store,config,{scope:'verified'});
   const cases=[

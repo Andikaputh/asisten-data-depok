@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { seeds } from './seed.js';
+import { createPortalStore } from './portal-store.js';
 
 export function splitText(text, size = 1500, overlap = 180) {
   const clean = text.replace(/\r\n/g, '\n').trim();
@@ -59,6 +60,7 @@ export function createStore(filename = 'data/corpus.sqlite', seed = true) {
 
   const store = {
     db,
+    portal:createPortalStore(db),
     list() { return db.prepare('SELECT * FROM documents ORDER BY retrievedAt DESC, title').all(); },
     get(id) { return db.prepare('SELECT * FROM documents WHERE id=?').get(id); },
     chunks(id) { return db.prepare('SELECT * FROM chunks WHERE documentId=? ORDER BY position').all(id); },

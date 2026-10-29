@@ -12,27 +12,29 @@ Chatbot proyek memakai **Ollama lokal**, bukan akun ChatGPT atau model asisten c
 - Uji alur pengunjung sungguhan: `npm.cmd run test:e2e:live`. Laporan `.artifacts/live-browser-latest.json` harus `ok: true`.
 - Buka http://127.0.0.1:3000/ dan http://127.0.0.1:3000/chat.
 - Pilih **Koleksi publik**. Mulai percakapan baru jika perlu.
+- Buka **Workspace → Cakupan portal**. Periksa jumlah URL dataset, antrean detail, kegagalan, dan lampiran belum diekstrak. Jangan memulai sinkronisasi besar saat presentasi.
 
-Model yang baru dimuat bisa lebih lambat. Uji terakhir pada mesin ini: metadata 14,6 detik, rumus 6,2 detik, satuan 3,8 detik, angka 3–7 milidetik. Uji sebelumnya saat mesin lebih sibuk mencapai 19–34 detik untuk teks. Kedua model berjalan di CPU pada perangkat ini; tutup aplikasi berat yang tidak diperlukan, tetapi jangan menghentikan proses pribadi tanpa menyimpan pekerjaan. Tunggu jawaban selesai sebelum mengirim pertanyaan berikutnya. Ini bukan jaminan latensi yang sama di semua perangkat.
+Pencarian katalog tidak menunggu LLM: uji revisi 0.3 mencatat sekitar 27–111 ms untuk contoh pencarian. Penyusunan jawaban model jauh lebih lambat dan dapat mencapai puluhan detik saat model dingin atau mesin sibuk. Kedua model berjalan di CPU pada perangkat ini; tutup aplikasi berat yang tidak diperlukan, tetapi jangan menghentikan proses pribadi tanpa menyimpan pekerjaan. Tunggu jawaban selesai sebelum mengirim pertanyaan berikutnya. Ini bukan jaminan latensi atau benchmark umum.
 
 ## Urutan demo (3–5 menit)
 
 1. Tunjukkan portal simulasi dan popup **Tanya Data**, lalu masuk ke halaman percakapan.
-2. Tanya **Apa itu metadata?** — model lokal menyusun kalimat dengan rujukan, bukan sekadar template.
-3. Tanya **Apa rumus persentase penanganan sampah?** — rumus berasal dari metadata yang diperiksa.
+2. Tanya **Ada data anak disabilitas?**, **Cari publikasi kesehatan**, atau **Cari dashboard sekolah**. Tunjukkan judul, penerbit, serta tautan asli; jelaskan bahwa entri katalog belum sama dengan isi yang terbaca.
+3. Tanya **Apa itu metadata?** — model lokal menyusun kalimat dari bukti. Jika perlu, tunjukkan rumus sampah dari metadata yang diperiksa.
 4. Tanya **Berapa persentase penanganan sampah di Kota Depok tahun 2025?** — jawaban **53,09 persen**, CSV baris 6 (termasuk header).
 5. Lanjutkan **Kalau 2024?** — jawaban **39 persen**, konteks indikator dipertahankan.
 6. Klik kartu sumber untuk memperlihatkan dokumen, status, dan halaman asal.
 7. Tanya **Berapa jumlah penduduk Kota Depok tahun 2099?** — sistem menolak menebak angka yang tidak tersedia.
+8. Tanya **Buatkan resep nasi goreng** — tugas di luar portal ditolak. Lanjutkan **Apakah kamu sudah memahami seluruh website?** — sistem menjelaskan cakupan, bukan mengaku menguasai semuanya.
 
 ## Penjelasan singkat yang jujur
 
-> Ini prototipe magang, bukan layanan resmi Pemkot. Koleksi pilot masih terbatas. Model lokal membantu menyusun jawaban dari bukti; angka dibaca langsung dari tabel terverifikasi. Pengguna tetap perlu memeriksa rujukan.
+> Ini prototipe asisten khusus Satu Data Depok, bukan layanan resmi Pemkot. Inventaris membantu menemukan ribuan entri sumber, tetapi pembacaan isi dan korpus angka yang ditinjau masih lebih terbatas. Model membantu menyusun jawaban dari bukti; pengguna tetap perlu memeriksa rujukannya.
 
 - `generated`: model menyusun jawaban yang lolos pemeriksaan mekanis.
 - `model-assisted`: model hanya memilih kutipan; komposisi gagal dan kalimat model tidak ditampilkan.
 - `extractive`: pembacaan tabel atau kutipan tanpa generasi model.
-- Belum mendukung PDF/XLSX, semua dataset portal, ataupun perhitungan lintas baris.
+- Inventaris mencakup banyak URL dataset, bukan otomatis seluruh isi dataset. Ekstraksi PDF/XLSX umum, OCR gambar, isi dashboard eksternal, dan perhitungan lintas baris belum didukung.
 - Validasi angka/rujukan tidak membuktikan seluruh makna jawaban benar; evaluasi manusia tetap diperlukan.
 
 ## Jika ada masalah

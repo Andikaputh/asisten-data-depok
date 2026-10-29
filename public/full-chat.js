@@ -30,10 +30,11 @@ if (typeof activeId !== 'string' || !activeId) activeId = crypto.randomUUID();
 let scope = load('depok:scope:v1','demo') === 'verified' ? 'verified' : 'demo';
 let busy = false, references = [], activeDrawer = '', drawerTrigger;
 const wideScreen = matchMedia('(min-width:1251px)'), mobileScreen = matchMedia('(max-width:760px)');
-const statusNames = {demo:'Panduan latihan',verified:'Terverifikasi',candidate:'Kandidat sumber',unverified:'Belum diperiksa',withdrawn:'Nonaktif'};
+const statusNames = {demo:'Panduan latihan',verified:'Terverifikasi',candidate:'Kandidat sumber',unverified:'Belum diperiksa',withdrawn:'Nonaktif',catalogued:'Terdaftar di portal','portal-read':'HTML terbaca · belum ditinjau'};
 const badge = status => `<span class="source-badge ${esc(status)}">${esc(statusNames[status] || status)}</span>`;
 const sourceArray = response => Array.isArray(response.sources) ? response.sources : [];
 const excerptArray = response => Array.isArray(response.excerpts) ? response.excerpts : [];
+const coverageNote=document.createElement('div');coverageNote.className='portal-coverage-note';coverageNote.id='portal-coverage';coverageNote.hidden=true;$('.conversation-toolbar').after(coverageNote);
 
 function archiveCurrent() {
   const first = history.find(item => item.role === 'user');
@@ -55,7 +56,7 @@ function renderSidebar() {
 function setScope(next) {
   if (busy) { $('#scope-select').value = scope; toast('Tunggu jawaban selesai sebelum mengganti koleksi.'); return; }
   scope = next === 'verified' ? 'verified' : 'demo'; save('depok:scope:v1',scope); $('#scope-select').value = scope;
-  $('#scope-note').innerHTML = `<span></span>${scope === 'demo' ? 'Mode simulasi · jawaban dari koleksi percobaan' : 'Koleksi publik · jawaban memerlukan sumber terverifikasi'}`;
+  $('#scope-note').innerHTML = `<span></span>${scope === 'demo' ? 'Mode simulasi · jawaban dari koleksi percobaan' : 'Koleksi publik · cari sumber portal; angka dibaca dari tabel yang ditinjau'}`;
 }
 function latestReferences() { return sourceArray([...history].reverse().find(item => item.role === 'assistant')?.response || {}); }
 function renderReferences(next = latestReferences()) {
@@ -126,6 +127,11 @@ async function openSource(id) {
     let url = ''; try { const parsed = new URL(source.sourceUrl); if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) url = parsed.href; } catch {}
     $('#dialog-title').textContent = source.title;
     $('#dialog-content').innerHTML = `${badge(source.status)}<p class="source-explanation">${source.status === 'demo' ? 'Ini panduan latihan aplikasi. Materi ini bukan dokumen resmi atau angka statistik Pemerintah Kota Depok.' : source.status === 'candidate' ? 'Halaman ini masih berupa kandidat. Isi sumber asli belum diverifikasi untuk menjadi dasar jawaban faktual.' : source.status === 'withdrawn' ? 'Sumber ini sudah dinonaktifkan. Jawaban lama yang merujuknya perlu diperiksa kembali.' : 'Periksa isi, periode, dan cakupan sumber sebelum menggunakan informasi ini.'}</p><dl class="source-detail-meta"><div><dt>PENERBIT</dt><dd>${esc(source.publisher)}</dd></div><div><dt>DITAMBAHKAN KE KOLEKSI</dt><dd>${date(source.retrievedAt)}</dd></div><div><dt>TAHUN OBSERVASI</dt><dd>${esc(source.year || 'Belum dicatat')}</dd></div><div><dt>CAKUPAN WILAYAH</dt><dd>${esc(source.region || 'Belum dicatat')}</dd></div></dl><pre class="document-content">${esc(source.content || source.description)}</pre>${url ? `<a class="source-origin" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Buka halaman sumber asli ${icon('arrow-up-right')}</a>` : ''}<p class="source-version">Salinan versi ${esc(source.version)} · detail ditampilkan dari koleksi lokal.</p>`;
+    if(['catalogued','portal-read'].includes(source.status)) {
+      $('#dialog-content .source-explanation').textContent=source.contentStatus==='read'?'Halaman HTML dibaca otomatis dari portal; belum ditinjau manual. Periksa konteks lengkap dan tanggal sumber.':'Sumber ini tercatat dalam katalog portal. Isi berkas belum dibaca otomatis; judulnya bukan bukti nilai statistik.';
+      const note=document.createElement('p');note.className='source-version';note.textContent=`Format: ${source.format || 'HTML'}${source.periodLabel?` · periode yang tertulis di katalog: ${source.periodLabel}`:''}.`;
+      $('#dialog-content').prepend(note);
+    }
     if (!$('#source-dialog').open) $('#source-dialog').showModal();
   } catch (error) { toast(error.message); }
 }
@@ -184,6 +190,7 @@ else {
   if (source) openSource(source);
 }
 fetch('/api/status',{signal:AbortSignal.timeout(5000)}).then(response=>response.json()).then(runtime=>{
-  if(runtime.counts?.verified>0 && !load('depok:public-default:v1',false) && !busy){setScope('verified');save('depok:public-default:v1',true);}
+   if((runtime.counts?.verified>0 || runtime.portal?.items>0) && !load('depok:public-default:v1',false) && !busy){setScope('verified');save('depok:public-default:v1',true);}
+   if(runtime.portal?.items>0){coverageNote.hidden=false;coverageNote.textContent=`Indeks: ${runtime.portal.datasets} URL dataset · ${runtime.portal.items} entri termasuk navigasi. Seluruh isi website belum dinyatakan terbaca.`;$('.reference-note p').textContent='Asisten khusus Portal Satu Data Depok. Entri katalog, halaman yang terbaca, dan tabel yang ditinjau memiliki tingkat bukti berbeda.';}
   if(!busy)$('#assistant-mode').textContent=runtime.model?.chatReady?'Layanan AI dikonfigurasi · jawaban bersumber':'Mode kutipan · layanan AI belum aktif';
 }).catch(()=>{}).finally(()=>{if(params.get('question') && params.get('view')!=='sources')ask(params.get('question'));});

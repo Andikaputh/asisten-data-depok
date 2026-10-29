@@ -1,4 +1,4 @@
-# Asisten Data Depok — prototipe RAG 0.2
+# Asisten Data Depok — asisten portal 0.3
 
 Simulasi portal Satu Data Kota Depok dengan popup dan halaman percakapan penuh, pencarian sumber publik, pembacaan CSV, dan integrasi LLM lokal Ollama (opsional OpenAI API). Tidak perlu melatih model dari nol. Ini proyek magang mandiri, bukan layanan resmi pemerintah.
 
@@ -10,6 +10,8 @@ Simulasi portal Satu Data Kota Depok dengan popup dan halaman percakapan penuh, 
 - Pencarian kata kunci dan pembacaan angka dapat digunakan tanpa LLM.
 - Integrasi Ollama (LLM lokal) dan OpenAI Responses API sudah diimplementasikan. Jalur Ollama gratis dan berjalan tanpa kunci API; uji 29 Oktober 2026 lulus 4/4 dengan `qwen2.5:3b-instruct` + `bge-m3`, indeks embedding 5/5, dan mode `generated` + `hybrid`. Jalur OpenAI memerlukan API key valid serta akses/kuota model.
 - Aplikasi tidak menyamarkan fallback sebagai jawaban model. Jika API atau validasi bukti gagal, pengguna menerima kutipan sumber dengan pemberitahuan.
+- Revisi 0.3 menambahkan inventaris portal yang terpisah dari korpus statistik terverifikasi: dataset, kategori, organisasi, publikasi, infografis, dashboard, galeri, dan panduan. Snapshot lokal 29 Oktober 2026 mencatat **2.242 URL dataset**. Ini cakupan katalog, **bukan klaim semua isi website atau berkas sudah dipahami**.
+- Pencarian dan navigasi katalog tidak memerlukan LLM. Pertanyaan di luar ruang lingkup ditolak; hasil kosong tidak dinyatakan sebagai bukti data tidak ada. Halaman detail HTML yang relevan dapat dibaca sesuai permintaan, dengan status pembacaan yang berbeda dari verifikasi manual.
 
 ## Jalankan
 
@@ -34,6 +36,8 @@ Server hanya menerima akses loopback. Jika port sudah dipakai, ubah PORT pada `.
 ## Aktifkan model lokal Ollama (gratis)
 
 Jalur ini tidak memakai kredit API. Inferensi berjalan di laptop dan hasilnya tetap diperiksa terhadap sumber.
+
+Masyarakat nantinya hanya membuka browser; model berjalan di backend pengelola, bukan di perangkat setiap pengunjung. Versi ini tetap dibatasi ke loopback lokal. Penerapan publik masih membutuhkan autentikasi pengelolaan, pembatasan pemakaian, anggaran API, dan peninjauan keamanan.
 
 1. Pasang Ollama dari [ollama.com/download](https://ollama.com/download), atau di PowerShell:
 
@@ -96,6 +100,50 @@ Konfigurasi dibaca ulang pada permintaan berikutnya; server tidak perlu dimulai 
 
 Panggilan OpenAI memakai layanan berbayar sesuai akun/model dan token yang digunakan. Status “kunci terisi” hanya memastikan konfigurasi tersedia, bukan membuktikan saldo, izin, atau respons model. Kegagalan autentikasi, kuota, akses model, dan koneksi ditangani tanpa mengekspos kunci.
 
+### Pisahkan provider chat dan embedding
+
+`RAG_PROVIDER` tetap kompatibel dengan konfigurasi lama. `CHAT_PROVIDER` dan `EMBED_PROVIDER` boleh mengesampingkannya secara terpisah. Contoh chat API dengan indeks lokal:
+
+```dotenv
+RAG_PROVIDER=ollama
+CHAT_PROVIDER=openai
+CHAT_MODEL=gpt-5.4-mini
+OPENAI_API_KEY=
+EMBED_PROVIDER=ollama
+EMBED_MODEL=bge-m3
+```
+
+Mengganti model chat saja tidak mengganti identitas indeks embedding. Mengganti provider/model embedding memerlukan pengindeksan ulang. Model embedding tetap harus tersedia pada server pengelola.
+
+Provider tambahan `openai-compatible` memerlukan `CHAT_BASE_URL` (HTTPS, umumnya berakhiran `/v1`), `CHAT_MODEL`, dan `CHAT_API_KEY`. Untuk embedding, tersedia `EMBED_BASE_URL`, `EMBED_MODEL`, dan `EMBED_API_KEY`. Endpoint dan nama model harus benar-benar didukung penyedia; aplikasi tidak menjamin semua API berlabel kompatibel memiliki fitur yang sama.
+
+**OAuth inference belum diimplementasikan.** Login Google/GitHub bagi pengguna berbeda dari akses model. Langganan/login ChatGPT pribadi bukan otomatis kuota API aplikasi publik. Jangan menyalin token login asisten coding ke `.env` chatbot. Tidak ada perpindahan otomatis ke provider berbayar jika Ollama gagal.
+
+## Inventaris dan navigasi seluruh portal
+
+```powershell
+npm.cmd run portal:sync -- --max-pages=40 --delay=1000
+```
+
+Jalankan batch berikutnya untuk melanjutkan antrean; jangan menjalankan dua sinkronisasi bersamaan. Alternatif: buka **Workspace → Cakupan portal**. Tombol **Lanjutkan 40 halaman** berjalan di latar belakang dan dapat dihentikan. Opsi **Ikut membaca halaman detail HTML** melanjutkan pembacaan detail setelah katalog/panduan yang antre selesai.
+
+```powershell
+# Ikut membaca detail HTML, bukan otomatis mengunduh semua lampiran:
+npm.cmd run portal:sync -- --max-pages=40 --details
+# Perbarui halaman daftar/panduan yang pernah dibaca; antrean tetap bertahap:
+npm.cmd run portal:sync -- --max-pages=40 --refresh
+```
+
+- Sumber hanya berasal dari halaman publik portal yang diizinkan. URL login, formulir permohonan, kredensial di URL, serta redirect keluar daftar izin tidak diikuti.
+- Jika `robots.txt` tersedia, aturannya diperiksa. Jika ditolak/tidak terbaca, ketidakpastian itu dicatat; ini **bukan bukti izin**. Koordinasikan sinkronisasi massal/berkala dengan pengelola dan utamakan API/ekspor resmi jika disediakan.
+- HTTP 429 atau tiga kegagalan berurutan menghentikan batch. Gagal, dibatasi, kosong, sebagian, dan antrean belum diproses tetap terlihat.
+- Tidak melakukan OCR gambar, ekstraksi PDF/XLSX umum, atau pembacaan isi layanan Tableau/BPS eksternal secara otomatis. Tautannya dapat ditemukan tanpa mengaku sudah memahami isinya.
+- Penelusuran ini belum membuktikan kelengkapan terhadap halaman tak tertaut atau API dinamis. `websiteComplete` sengaja tetap `false`.
+
+Tingkat bukti dibedakan: **Terdaftar di portal** (judul/tautan), **HTML terbaca · belum ditinjau** (kutipan halaman otomatis), dan **Terverifikasi** (korpus yang ditinjau lokal). Tanggal pembaruan dan periode katalog tidak dipakai sebagai nilai statistik.
+
+Rancangan dan batas implementasi: [docs/09-asisten-portal.md](docs/09-asisten-portal.md).
+
 ## Contoh pertanyaan
 
 Pilih **Koleksi publik** pada bagian atas percakapan. Pilihan ini menjadi default ketika sumber publik tersedia pada versi baru.
@@ -106,6 +154,11 @@ Pilih **Koleksi publik** pada bagian atas percakapan. Pilihan ini menjadi defaul
 - “Berapa persentase penanganan sampah di Kota Depok tahun 2025?”
 - Lanjutkan dengan “Kalau 2024?”
 - “Cari dataset penduduk Kelurahan Depok” untuk pencarian kandidat katalog.
+- “Ada data anak disabilitas?”
+- “Cari publikasi kesehatan”
+- “Cari dashboard sekolah”
+- “Apakah kamu sudah memahami seluruh website?” untuk melihat batas cakupan, bukan klaim penguasaan penuh.
+- “Buatkan resep nasi goreng” untuk menguji penolakan tugas di luar portal.
 
 Kasus angka sampah 2025 menghasilkan **53,09 persen**, dari baris keenam CSV publik (termasuk header). Itu merupakan observasi pada sumber, bukan perhitungan atau estimasi model. Data 2026 dan wilayah yang tidak tercakup tidak diisi dengan tebakan.
 
@@ -185,7 +238,7 @@ npm.cmd run test:e2e:live
 - `check`: pemeriksaan sintaks/modul JavaScript.
 - `test`: unit, HTTP, parser, persistensi, serta SDK OpenAI/Ollama dengan server tiruan. Tidak memakai API key asli.
 - `test:e2e`: portal → popup → full chat, riwayat, drawer mobile, impor/review/angka, dan pemisahan koleksi. Database uji terpisah.
-- `test:e2e:live`: browser terisolasi terhadap server lokal + Ollama sungguhan: definisi, rumus, satuan, angka 2025, tindak lanjut 2024, data yang tidak tersedia, kartu sumber, reload, dan mobile. Fallback tidak dihitung sebagai generasi berhasil. Hasil: `.artifacts/live-browser-latest.json`.
+- `test:e2e:live`: browser terisolasi terhadap server lokal + Ollama sungguhan: definisi, rumus, satuan, angka 2025, tindak lanjut 2024, pencarian portal, penolakan luar topik, hasil kosong, cakupan, kartu sumber, reload, dan mobile. Memerlukan korpus pilot serta inventaris portal. Fallback tidak dihitung sebagai generasi berhasil. Hasil: `.artifacts/live-browser-latest.json`.
 - `test:corpus`: 18 kasus regresi menggunakan korpus publik pada workspace, tanpa LLM. Tidak sama dengan benchmark umum akurasi RAG.
 - `rag:activate`: pengujian provider sungguhan; membutuhkan Ollama yang berjalan, atau kunci dan kuota OpenAI.
 
@@ -209,6 +262,7 @@ Jalur utama workspace ini adalah Ollama; lihat [Aktifkan model lokal Ollama](#ak
 | `server/chat.js`, `retrieval.js` | Routing pertanyaan, pencarian, konteks dan nilai tabel |
 | `server/model.js`, `grounding.js`, `indexing.js` | API LLM/embedding, validasi klaim dan indeks |
 | `server/public-sources.js` | Pengambilan dan parser sumber publik terkurasi |
+| `server/portal-store.js`, `portal-sync.js`, `portal-chat.js` | Inventaris, antrean sinkronisasi, pencarian, ruang lingkup dan pembacaan halaman portal |
 | `server/store.js` | SQLite, versi/hash, observasi dan catatan panggilan |
 | `data/corpus.sqlite` | Koleksi lokal; diabaikan Git |
 | `data/raw/` | Salinan mentah untuk pemeriksaan; diabaikan Git |
@@ -219,7 +273,7 @@ Kunci tidak dikirim ke browser. Jalur Ollama tidak memerlukan kunci sama sekali.
 
 ## Batas dan serah terima
 
-Koleksi pilot masih kecil dan belum mencakup seluruh portal. Tidak ada PDF/XLSX, crawler menyeluruh, perhitungan lintas baris, atau sinkronisasi berkala. Tahun observasi tidak disimpulkan dari tanggal pembaruan. Riwayat lama merupakan snapshot; periksa sumber terkini jika kemudian dinonaktifkan.
+Korpus statistik terverifikasi masih kecil, meskipun inventaris katalog jauh lebih luas. Pengumpulan HTML tersedia secara bertahap, tetapi belum ada ekstraksi PDF/XLSX umum, OCR, perhitungan lintas baris, atau penjadwalan sinkronisasi otomatis. Filter ruang lingkup dan pemeriksaan mekanis belum membuktikan semua pertanyaan/adversarial prompt pasti tertangani. Tahun observasi tidak disimpulkan dari tanggal pembaruan. Riwayat lama merupakan snapshot; periksa sumber terkini jika kemudian berubah.
 
 Workspace belum memakai autentikasi multi-pengguna dan hanya ditujukan untuk lingkungan lokal. Jangan membuka server ini ke publik tanpa menambahkan autentikasi pengelolaan, pembatasan pemakaian, dan peninjauan operasional. Batas prototipe: 100 dokumen aktif, 500 ribu karakter/dokumen, CSV maksimal 5000 baris.
 

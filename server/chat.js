@@ -1,6 +1,7 @@
 import { candidateSearch, normalize, rankSentences, retrieve, tokens } from './retrieval.js';
 import { embedTexts, selectEvidence, embeddingIdentity, embeddingsReady, modelReady, providerError } from './model.js';
 import { generateGroundedAnswer, composeLocalAnswer } from './grounding.js';
+import {isOutsidePortal,outsidePortalAnswer,hasPortalContext,hasTopicEvidence,portalNavigation,portalContentAnswer,portalNotFound,portalSuggestionsForNumber,coverageSummary} from './portal-chat.js';
 
 function sourceCard(row, excerpt) {
   return { id: row.id, documentId: row.documentId, title: row.title, url: row.sourceUrl || null, publisher: row.publisher, status: row.status, year: row.year || null, region: row.region || null, retrievedAt: row.retrievedAt, version: row.version, excerpt: excerpt || row.text?.slice(0, 300) || '', rowNumber: row.rowNumber || null };
@@ -47,8 +48,9 @@ function assembleGrounded(generated, result, store, scope) {
   return { answer, sources, excerpts, claims: generated.claims };
 }
 
-export async function answerQuestion(store, { question, scope = 'verified', useModel = false, previousQuestion = '' }, config) {
+export async function answerQuestion(store, { question, scope = 'verified', useModel = false, previousQuestion = '',readPortalOnDemand=false,portalFetcher=fetch }, config) {
   const start = performance.now();
+  const outside=isOutsidePortal(question);
   // Fill a short clarification; a new explicit question starts its own search.
   if (previousQuestion && question.length < 180 && /^(?:\d{4}\b|kalau\b|kalo\b|untuk\b|yang\b|tahun\b|di\b|kota\b|kecamatan\b|kelurahan\b|terbaru\b|bagaimana dengan\b)/i.test(question.trim())) {
     const nextYears = question.match(/\b(?:19|20)\d{2}\b/g) || [];
@@ -56,18 +58,30 @@ export async function answerQuestion(store, { question, scope = 'verified', useM
     question = `${context} ${question}`;
   }
   const finish = result => ({ ...result, scope, resolvedQuestion:question.slice(0,2000),mode: result.mode || 'extractive', method: result.method || 'keyword', elapsedMs: Math.round(performance.now() - start) });
+  if(outside)return finish(outsidePortalAnswer());
   if (/^(halo|hai|hello|selamat pagi|selamat siang|selamat sore|selamat malam|terima kasih|makasih)[!.,\s]*$/i.test(question)) return finish({status:'assistance',answer:'Halo! Saya bisa membantu mencari sumber publik dan menjelaskan metadata data Depok. Sebutkan topik, wilayah, dan tahun yang kamu butuhkan. Contoh: apa rumus persentase penanganan sampah?',sources:[]});
   if (/\bnik\b|nomor induk kependudukan|alamat pribadi|data pribadi/i.test(question)) return finish({ status: 'out_of_scope', answer: 'Prototipe ini membantu mencari data publik agregat. Saya tidak menyediakan NIK atau data pribadi warga. Kamu dapat mencari statistik kependudukan agregat yang tersedia.', sources: [] });
   if (/\b(?:abaikan|karang|mengarang)\b|buat saja angka|pura.pura|instruksi sebelumnya/i.test(question)) return finish({ status: 'insufficient_evidence', answer: 'Saya hanya dapat menyampaikan informasi dari sumber yang tersedia dalam koleksi. Saya tidak membuat angka atau sumber pengganti. Sebutkan topik data yang ingin dicari.', sources: [] });
   const discovery = /\b(cari|carikan|temukan|publikasi|tersedia|ketersediaan|ada data|dataset)\b/i.test(question) && !/definisi|jelaskan|metadata|cara/i.test(question);
-  const definition = /definisi|jelaskan|arti|maksud|apa itu|rumus/i.test(question);
+  const definition = /definisi|jelaskan|arti|maksud|apa itu|rumus|ringkas|simpulkan|satuan|interpretasi|makna|metode|perbedaan|bedanya|cara (?:meng)?hitung/i.test(question);
   const numeric = !discovery && !definition && (/berapa|jumlahnya|nilai |total |banding|selisih|pertumbuhan|jumlahkan/i.test(question) || /(?:jumlah|persentase).*(?:\b(?:19|20)\d{2}\b|terbaru)/i.test(question));
   const candidates = candidateSearch(store, question);
+  if(scope==='verified') {
+    // Check scope before invoking embeddings or a model. A generic question
+    // cannot become in-scope just because a vector happens to look similar.
+    if(!hasPortalContext(question) && !hasTopicEvidence(question,candidates) && !hasTopicEvidence(question,store.portal.search(question,{limit:3})))return finish(outsidePortalAnswer());
+    const navigation=portalNavigation(store,question,{numeric,definition});
+    if(navigation)return finish({...navigation,coverage:coverageSummary(store)});
+  }
   if (discovery && !tokens(question).length) return finish({ status: 'clarify', answer: 'Topik data apa yang ingin kamu cari? Sebutkan misalnya penduduk, kesehatan, sampah, atau publikasi tertentu, beserta wilayah jika ada.', sources: [] });
   if (numeric) {
     if (scope === 'demo') return finish({ status: 'insufficient_evidence', answer: 'Mode latihan berisi panduan aplikasi dan tidak berisi angka statistik Depok. Untuk membaca angka, beralih ke Koleksi publik lalu impor dan verifikasi tabel CSV sumber terlebih dahulu.', sources: candidates.map(row => sourceCard(row)), method: 'structured' });
     const result = numericAnswer(store, question);
     if (!result.sources.length) result.sources = candidates.map(row => sourceCard(row));
+    if(result.status==='insufficient_evidence') {
+      const suggestions=portalSuggestionsForNumber(store,question);
+      if(suggestions){result.sources=suggestions.sources;result.notice=suggestions.notice;}
+    }
     return finish({ ...result, method: 'structured' });
   }
   if (discovery) return finish({ status: candidates.length ? 'discovery' : 'insufficient_evidence', answer: candidates.length ? `Saya menemukan ${candidates.length} sumber terkait dalam katalog lokal. Periksa status setiap sumber: kandidat dan dokumen belum diperiksa belum dapat menjadi dasar jawaban faktual. Daftar ini belum mencakup seluruh portal.` : 'Belum ada sumber terkait dalam katalog lokal. Coba topik lain atau tambahkan dokumen publik melalui menu Koleksi sumber. Hasil kosong tidak berarti data tersebut tidak ada di portal.', sources: candidates.map(row => sourceCard(row)) });
@@ -95,14 +109,21 @@ export async function answerQuestion(store, { question, scope = 'verified', useM
   }
   result.hits=result.hits.filter(hit=>store.get(hit.documentId)?.status===(scope==='demo'?'demo':'verified'));
   const sentences = rankSentences(result.hits, question);
+  if(!sentences.length && scope==='verified') {
+    const content=await portalContentAnswer(store,question,{useModel,config,readOnDemand:readPortalOnDemand,fetcher:portalFetcher});
+    if(content)return finish({...content,coverage:coverageSummary(store)});
+    if(!hasPortalContext(question) && !candidates.length)return finish(outsidePortalAnswer());
+    if(store.portal.coverage().items)return finish({...portalNotFound(store,question),coverage:coverageSummary(store)});
+  }
   if (!sentences.length) return finish({ status: 'insufficient_evidence', answer: scope === 'demo' ? 'Panduan latihan belum memuat jawaban untuk pertanyaan itu. Coba tanyakan cara mencari dataset, arti metadata, atau perbedaan tahun data dan tanggal pembaruan. Untuk topik Depok, gunakan Koleksi publik dan tambahkan sumber asli.' : 'Belum ada bukti yang sesuai dalam koleksi publik terverifikasi. Impor dokumen sumber dan tinjau isinya melalui menu Koleksi sumber. Kandidat katalog berikut hanya membantu menemukan sumber, belum membuktikan jawaban.', sources: candidates.filter(row=>store.get(row.documentId)?.status!=='withdrawn').map(row => sourceCard(row)), method: result.method, notice: [result.warning,generationNotice].filter(Boolean).join(' ') });
   let selected = sentences.slice(0, /rumus|hitung/i.test(question)?1:3), notice = [result.warning,generationNotice].filter(Boolean).join(' '), mode = 'extractive', modelUsage, compositionUsage, composedAnswer = '';
-  if (useModel && config.provider!=='openai' && config.chatModel) {
+  if (useModel && config.provider!=='openai' && modelReady(config)) {
+    const modelLabel=config.provider==='ollama' || !config.provider?'Model lokal':'Model';
     try {
       const selection = await selectEvidence(question, sentences.map(s => ({ id: s.id, text: s.text })), config);
-      store.logRun({provider:'ollama',model:config.chatModel,status:'success',...selection.usage,elapsedMs:Math.round(performance.now()-start)});
+      store.logRun({provider:config.provider || 'ollama',model:config.chatModel,status:'success',...selection.usage,elapsedMs:Math.round(performance.now()-start)});
       modelUsage = selection.usage;
-      if (!selection.ids.length) return finish({ status: 'insufficient_evidence', answer: 'Model lokal tidak menemukan kutipan yang cukup relevan untuk menjawab. Perjelas pertanyaan atau tambahkan sumber yang sesuai.', sources: [], method: result.method, mode: 'model-assisted', usage: selection.usage });
+      if (!selection.ids.length) return finish({ status: 'insufficient_evidence', answer: `${modelLabel} tidak menemukan kutipan yang cukup relevan untuk menjawab. Perjelas pertanyaan atau tambahkan sumber yang sesuai.`, sources: [], method: result.method, mode: 'model-assisted', usage: selection.usage });
       selected = selection.ids.map(id => sentences.find(s => s.id === id)); mode = 'model-assisted';
       // The evidence is already fixed, so the model only has to phrase it.
       // Failure keeps the extractive template: never show an unvalidated sentence.
@@ -112,12 +133,12 @@ export async function answerQuestion(store, { question, scope = 'verified', useM
         modelUsage = { inputTokens: (modelUsage?.inputTokens || 0) + composed.usage.inputTokens, outputTokens: (modelUsage?.outputTokens || 0) + composed.usage.outputTokens };
       } catch (composeError) {
         store.logRun({provider:config.provider,model:config.chatModel,status:'failed',errorCode:composeError.code || 'invalid_model_output',elapsedMs:Math.round(performance.now()-start)});
-        notice = [notice, 'Model lokal tidak dapat menyusun kalimat jawaban; kutipan sumber tetap ditampilkan.'].filter(Boolean).join(' ');
+        notice = [notice, `${modelLabel} tidak dapat menyusun kalimat jawaban; kutipan sumber tetap ditampilkan.`].filter(Boolean).join(' ');
       }
     } catch (error) {
       const code = error instanceof SyntaxError || /tidak valid/.test(error.message) ? 'invalid_model_output' : providerError(error).code;
-      store.logRun({provider:'ollama',model:config.chatModel,status:'failed',errorCode:code,elapsedMs:Math.round(performance.now()-start)});
-      notice = [notice, 'Model lokal tidak tersedia atau hasilnya tidak valid; kutipan dipilih dengan pencarian lokal.'].filter(Boolean).join(' ');
+      store.logRun({provider:config.provider || 'ollama',model:config.chatModel,status:'failed',errorCode:code,elapsedMs:Math.round(performance.now()-start)});
+      notice = [notice, `${modelLabel} tidak tersedia atau hasilnya tidak valid; kutipan dipilih dengan pencarian lokal.`].filter(Boolean).join(' ');
     }
   }
   const sourceMap = new Map();
@@ -137,5 +158,5 @@ export async function answerQuestion(store, { question, scope = 'verified', useM
   const answerText = composedAnswer
     ? `${composedAnswer} ${[...new Set(excerpts.map(item => item.sourceIndex))].map(index => `[${index}]`).join(' ')}`
     : (scope === 'demo' ? 'Berikut petunjuk dari panduan latihan aplikasi. Materi ini bukan dokumen resmi Pemerintah Kota Depok.' : 'Berikut kutipan yang cocok dari dokumen yang sudah ditinjau dalam koleksi lokal. Periksa konteks lengkap melalui kartu sumber.');
-  return finish({ status: 'answered', answer: answerText, excerpts, sources, method: result.method, mode, usage: modelUsage, notice, ...(composedAnswer ? { provider: config.provider, model: config.chatModel } : {}) });
+  return finish({ status: 'answered', answer: answerText, excerpts, sources, method: result.method, mode, usage: modelUsage, notice, ...(modelUsage ? { provider: config.provider || 'ollama', model: config.chatModel } : {}) });
 }

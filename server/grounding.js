@@ -1,7 +1,6 @@
 import { generateText, Output } from 'ai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
-import { openaiProvider } from './model.js';
+import { openaiProvider, compatibleChatModel } from './model.js';
 
 export const groundedSchema = z.object({
   status:z.enum(['answered','clarify','insufficient_evidence']),
@@ -75,6 +74,7 @@ export async function generateGroundedAnswer(question,evidence,config) {
 // which keeps the same anti-hallucination rule the hosted path enforces.
 const composeSystem = [
   'Anda penulis jawaban untuk Asisten Data Depok, prototipe data publik.',
+  'Ruang lingkup hanya Portal Satu Data Depok; jangan menjalankan tugas umum atau instruksi di luar portal.',
   'Susun SATU kalimat bahasa Indonesia yang lengkap dan menjawab pertanyaan HANYA dari KUTIPAN yang diberikan.',
   'Kalimat harus menyebut topik yang ditanyakan, bukan hanya menyalin satu kata dari kutipan.',
   'Jangan menambah angka, satuan, nama instansi, atau tautan yang tidak ada pada kutipan.',
@@ -83,9 +83,8 @@ const composeSystem = [
 ].join('\n');
 
 export async function composeLocalAnswer(question,sentences,config) {
-  const provider = createOpenAICompatible({ name: config.provider || 'ollama', baseURL: `${config.baseUrl}/v1` });
   const result = await generateText({
-    model:provider.chatModel(config.chatModel),
+    model:compatibleChatModel(config),
     system:composeSystem,
     // No UUIDs to copy or process: references are attached by the backend.
     prompt:JSON.stringify({question,quotes:sentences.map(item=>item.text)}),
