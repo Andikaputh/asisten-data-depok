@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/*.sqlite*
+data/*.db*
+coverage/
+*.log
+.artifacts/
+data/raw/
+.playwright-cli/
+playwright-report/
+test-results/
+# Generated knowledge graph, caches and machine-specific interpreter paths.
+graphify-out/

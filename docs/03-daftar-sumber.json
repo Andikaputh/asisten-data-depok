@@ -1,0 +1,38 @@
+{
+  "checked_on": "2026-10-26",
+  "purpose": "Daftar kandidat untuk kurasi, bukan korpus RAG terverifikasi",
+  "sources": [
+    {
+      "id": "portal-home",
+      "url": "https://satudata.depok.go.id/",
+      "kind": "homepage",
+      "observation": "Akses langsung melalui alat web menghasilkan Request Rejected",
+      "verified_for_rag": false,
+      "next_action": "Periksa akses publik normal atau minta bahan publik dari pembimbing"
+    },
+    {
+      "id": "metadata-sampah",
+      "url": "https://satudata.depok.go.id/User/detail_dataset/82c267e4-9b34-45fc-afb2-74732c04bc4d",
+      "kind": "dataset_metadata",
+      "observation": "Hasil pencarian mengindeks metadata; akses langsung menghasilkan Request Rejected; tabel nilai belum diperoleh",
+      "verified_for_rag": false,
+      "next_action": "Dapatkan halaman atau ekspor publik asli; periksa definisi, satuan, periode, dan nilai secara terpisah"
+    },
+    {
+      "id": "produk-sektoral",
+      "url": "https://satudata.depok.go.id/User/produk_bidangstatistik?page=1",
+      "kind": "publication_catalog",
+      "observation": "Daftar publikasi muncul di hasil pencarian; akses langsung gagal melalui alat web",
+      "verified_for_rag": false,
+      "next_action": "Konfirmasi daftar aktual dan unduh publikasi yang memang tersedia publik"
+    },
+    {
+      "id": "organisasi-kelurahan-depok",
+      "url": "https://satudata.depok.go.id/User/data_organisasi/e6fa09db-e69b-4f48-9ccb-23ce6e543925",
+      "kind": "organization_catalog",
+      "observation": "Hasil pencarian menampilkan kandidat dataset kependudukan; belum diperiksa langsung",
+      "verified_for_rag": false,
+      "next_action": "Periksa tautan detail, cakupan kelurahan, dan periode observasi"
+    }
+  ]
+}

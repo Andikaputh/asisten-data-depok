@@ -1,0 +1,11 @@
+{
+  "reviewedAt": "2026-10-26",
+  "reviewer": "Pemeriksaan kesesuaian salinan publik oleh Codex, 26 Oktober 2026",
+  "meaning": "Pemeriksaan kesesuaian ekstraksi dengan sumber publik; bukan pengesahan atau audit statistik oleh Pemerintah Kota Depok.",
+  "sources": [
+    {"url":"https://satudata.depok.go.id/User/metadata","hash":"84ae0582970512cf93fd0dc6938e8ba40e40d8463788a05cff0bc4dd7ff2ce67","note":"Pengertian dan tiga jenis metadata dicocokkan dengan paragraf/kartu sumber. Tabel katalog besar pada halaman tidak dimasukkan."},
+    {"url":"https://satudata.depok.go.id/User/detail_dataset/82c267e4-9b34-45fc-afb2-74732c04bc4d","hash":"681b878239a0a2103e541594f23569b49e4ff8aaa9db633a7abf5d982df9ade4","note":"Definisi, interpretasi, formula, satuan, dan tanggal pembaruan dicocokkan dengan tabel HTML publik. Tanggal pembaruan tidak dipakai sebagai tahun observasi."},
+    {"url":"https://satudata.depok.go.id/User/detail_dataset/192bfc19-1786-41be-93be-757fa9ed97cd","hash":"11689f7cddf166e72aceff8672be3d9b00fc0f5d43584a110e6c3ee07b497f42","note":"Judul sumber menyatakan indikator tidak menjadi indikator kegiatan sejak 2025; keterangan ini dipertahankan. Metadata hanya digunakan sesuai konteks tersebut."},
+    {"url":"https://satudata.depok.go.id/uploads/dataset/Tersedianya_data_dan_informasi_penanganan_sampah_di_wilayah_kab_kota1.csv","hash":"a35b0afb41ecba20fe56deb364725a6c24c4ffe4484a96e0d35f7d8f51d0d346","note":"Lima baris sumber diperiksa: 2021=39,82; 2022=38,28; 2023=38,2; 2024=39; 2025=53,09, semuanya persen untuk Kota Depok. Urutan baris dipertahankan. Nama indikator dinormalisasi memakai Konsep pada metadata."}
+  ]
+}

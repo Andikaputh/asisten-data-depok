@@ -1,0 +1,35 @@
+{
+  "name": "asisten-data-depok",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototipe lokal pencarian data publik dan RAG bersumber untuk Satu Data Depok",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=.env server/index.js",
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "sources:sync": "node scripts/sync-public-sources.mjs",
+    "sources:approve-reviewed": "node scripts/approve-reviewed-sources.mjs",
+    "rag:activate": "node --env-file-if-exists=.env scripts/activate-rag.mjs",
+    "test:corpus": "node scripts/evaluate-public-corpus.mjs",
+    "test": "node --test --test-concurrency=1",
+    "test:e2e": "node scripts/browser-check.mjs && node scripts/portal-browser-check.mjs",
+    "test:e2e:live": "node --env-file-if-exists=.env scripts/live-browser-check.mjs",
+    "check": "tsc -p jsconfig.json --noEmit && node --check public/app.js && node --check public/portal.js && node --check public/full-chat.js"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.102",
+    "@ai-sdk/openai-compatible": "^3.0.78",
+    "ai": "^7.0.153",
+    "cheerio": "^1.2.0",
+    "csv-parse": "^7.0.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
