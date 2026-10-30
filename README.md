@@ -12,6 +12,7 @@ Simulasi portal Satu Data Kota Depok dengan popup dan halaman percakapan penuh, 
 - Aplikasi tidak menyamarkan fallback sebagai jawaban model. Jika API atau validasi bukti gagal, pengguna menerima kutipan sumber dengan pemberitahuan.
 - Revisi 0.3 menambahkan inventaris portal yang terpisah dari korpus statistik terverifikasi: dataset, kategori, organisasi, publikasi, infografis, dashboard, galeri, dan panduan. Snapshot lokal 29 Oktober 2026 mencatat **2.242 URL dataset**. Ini cakupan katalog, **bukan klaim semua isi website atau berkas sudah dipahami**.
 - Pencarian dan navigasi katalog tidak memerlukan LLM. Pertanyaan di luar ruang lingkup ditolak; hasil kosong tidak dinyatakan sebagai bukti data tidak ada. Halaman detail HTML yang relevan dapat dibaca sesuai permintaan, dengan status pembacaan yang berbeda dari verifikasi manual.
+- Revisi 0.3.1 menambahkan **cadangan dan pemulihan** dokumen, observasi, serta inventaris portal dalam satu berkas JSON. Setiap isi diperiksa hash-nya sebelum ditulis, status verifikasi ikut dipulihkan, dan tersedia lewat workspace maupun CLI.
 
 ## Jalankan
 
@@ -222,6 +223,25 @@ Nilai manual memakai titik desimal tanpa pemisah ribuan. Nilai kosong dan “-�
 
 Setelah menambah sumber, klik **Bangun indeks embedding**. Hanya potongan yang belum memiliki embedding dari provider/model aktif yang diproses. Tanpa indeks semantik, pencarian kata kunci tetap berjalan dengan pemberitahuan yang sesuai.
 
+### Cadangkan dan pulihkan
+
+Cadangan JSON memuat dokumen, observasi, inventaris portal, halaman HTML yang sudah dibaca, metadata cakupan, dan riwayat batch. Vektor embedding tidak disertakan karena terikat provider/model; bangun ulang indeks setelah pemulihan bila pencarian semantik diperlukan.
+
+Lewat antarmuka: **Workspace → Koleksi sumber → Unduh cadangan** dan **Pulihkan**. Lewat terminal, hentikan server lebih dulu:
+
+```powershell
+npm.cmd run backup
+npm.cmd run restore -- data/backups/cadangan-2026-10-30T....json --dry-run
+npm.cmd run restore -- data/backups/cadangan-2026-10-30T....json
+npm.cmd run restore -- data/backups/cadangan-2026-10-30T....json --as-unverified
+```
+
+- Pemulihan bersifat menambah/menyegarkan, bukan menghapus: ID yang sudah ada dilewati, salinan identik tidak digandakan, dan entri portal dengan identitas sama diperbarui.
+- Setiap dokumen dan halaman diperiksa hash SHA-256 isinya. Berkas yang rusak atau diubah ditolak seluruhnya sebelum ada penulisan. Hash menjaga keutuhan berkas, bukan membuktikan peninjauan manusia: pulihkan hanya cadangan milik sendiri.
+- Status verifikasi ikut dipulihkan. Gunakan `--as-unverified` bila cadangan berasal dari berkas yang belum dipercaya; dokumen terverifikasi akan diturunkan menjadi belum diperiksa.
+- Unggahan lewat browser dibatasi 64 MB. Untuk cadangan lebih besar, gunakan CLI (maksimal 256 MB).
+- Hentikan server sebelum pemulihan CLI agar tidak ada penulisan bersamaan. Untuk memindahkan seluruh koleksi, menyalin folder `data/` saat server berhenti tetap cara paling lengkap.
+
 ## Pengujian
 
 ```powershell
@@ -236,7 +256,7 @@ npm.cmd run test:e2e:live
 ```
 
 - `check`: pemeriksaan sintaks/modul JavaScript.
-- `test`: unit, HTTP, parser, persistensi, serta SDK OpenAI/Ollama dengan server tiruan. Tidak memakai API key asli.
+- `test`: unit, HTTP, parser, persistensi, cadangan/pemulihan, serta SDK OpenAI/Ollama dengan server tiruan. Tidak memakai API key asli.
 - `test:e2e`: portal → popup → full chat, riwayat, drawer mobile, impor/review/angka, dan pemisahan koleksi. Database uji terpisah.
 - `test:e2e:live`: browser terisolasi terhadap server lokal + Ollama sungguhan: definisi, rumus, satuan, angka 2025, tindak lanjut 2024, pencarian portal, penolakan luar topik, hasil kosong, cakupan, kartu sumber, reload, dan mobile. Memerlukan korpus pilot serta inventaris portal. Fallback tidak dihitung sebagai generasi berhasil. Hasil: `.artifacts/live-browser-latest.json`.
 - `test:corpus`: 18 kasus regresi menggunakan korpus publik pada workspace, tanpa LLM. Tidak sama dengan benchmark umum akurasi RAG.
@@ -262,6 +282,7 @@ Jalur utama workspace ini adalah Ollama; lihat [Aktifkan model lokal Ollama](#ak
 | `server/chat.js`, `retrieval.js` | Routing pertanyaan, pencarian, konteks dan nilai tabel |
 | `server/model.js`, `grounding.js`, `indexing.js` | API LLM/embedding, validasi klaim dan indeks |
 | `server/public-sources.js` | Pengambilan dan parser sumber publik terkurasi |
+| `server/backup.js`, `scripts/backup.mjs`, `scripts/restore.mjs` | Cadangan JSON dan pemulihan dokumen serta inventaris portal |
 | `server/portal-store.js`, `portal-sync.js`, `portal-chat.js` | Inventaris, antrean sinkronisasi, pencarian, ruang lingkup dan pembacaan halaman portal |
 | `server/store.js` | SQLite, versi/hash, observasi dan catatan panggilan |
 | `data/corpus.sqlite` | Koleksi lokal; diabaikan Git |
@@ -277,7 +298,7 @@ Korpus statistik terverifikasi masih kecil, meskipun inventaris katalog jauh leb
 
 Workspace belum memakai autentikasi multi-pengguna dan hanya ditujukan untuk lingkungan lokal. Jangan membuka server ini ke publik tanpa menambahkan autentikasi pengelolaan, pembatasan pemakaian, dan peninjauan operasional. Batas prototipe: 100 dokumen aktif, 500 ribu karakter/dokumen, CSV maksimal 5000 baris.
 
-Untuk backup penuh, hentikan server lalu salin folder data. Ekspor JSON tersedia sebagai arsip, tetapi pemulihan lewat UI belum disediakan. Percakapan disimpan di browser; sumber disimpan di SQLite.
+Untuk backup penuh, hentikan server lalu salin folder data, atau gunakan cadangan JSON yang dapat dipulihkan lewat workspace maupun CLI. Percakapan disimpan di browser; sumber dan inventaris disimpan di SQLite.
 
 Identitas visual merujuk [Satu Data Depok](https://satudata.depok.go.id/): navy #243062, marun #873230, dan biru muda #F3F6FF. [Logo](https://satudata.depok.go.id/assets-publik/img/logo-sadepok.png) dan [ilustrasi](https://satudata.depok.go.id/assets-publik/img/illustrations/hero-illustration.svg) berasal dari aset publik portal untuk simulasi ini. Ringkasan 2.240 dataset, 25 visualisasi, 97 infografis, dan 105 organisasi pada halaman portal adalah cuplikan 26 Oktober 2026, bukan jumlah sumber chatbot.
 

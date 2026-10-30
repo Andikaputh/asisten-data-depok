@@ -1,6 +1,6 @@
 {
   "name": "asisten-data-depok",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "Prototipe lokal pencarian data publik dan RAG bersumber untuk Satu Data Depok",
@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env server/index.js",
     "start": "node --env-file-if-exists=.env server/index.js",
+    "backup": "node scripts/backup.mjs",
+    "restore": "node scripts/restore.mjs",
     "sources:sync": "node scripts/sync-public-sources.mjs",
     "portal:sync": "node scripts/sync-portal.mjs",
     "sources:approve-reviewed": "node scripts/approve-reviewed-sources.mjs",

@@ -10,17 +10,19 @@ import { indexCorpus, indexStatus } from './indexing.js';
 import { syncPublicSources, importPublicWasteCsv } from './public-sources.js';
 import {syncPortal,PORTAL_SECTIONS} from './portal-sync.js';
 import {coverageSummary} from './portal-chat.js';
+import {buildBackup,restoreBackup,MAX_BACKUP_BYTES} from './backup.js';
+import {APP_VERSION} from './version.js';
 
 const publicDirectory = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.csv': 'text/csv; charset=utf-8' };
 const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
 
-async function readJson(req) {
+async function readJson(req, maxBytes = 2_000_000) {
   if (!(req.headers['content-type'] || '').startsWith('application/json')) throw new UserError('Gunakan Content-Type application/json.', 415);
   const chunks = []; let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 2_000_000) throw new UserError('Permintaan terlalu besar; maksimal 2 MB.', 413);
+    if (size > maxBytes) throw new UserError(`Permintaan terlalu besar; maksimal ${Math.round(maxBytes / 1_000_000)} MB.`, 413);
     chunks.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new UserError('JSON tidak valid.'); }
@@ -48,7 +50,7 @@ export function createApp({ store = createStore(), config:fixedConfig, portalFet
       const { pathname } = url;
       if (req.headers.origin && req.headers.origin !== `http://${host}`) throw new UserError('Origin tidak diizinkan.', 403);
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new UserError('Permintaan lintas situs tidak diizinkan.', 403);
-      if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: '0.3.0' });
+      if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: APP_VERSION });
       if (pathname === '/api/status' && req.method === 'GET') {
         const documents = store.list();
         const counts = Object.fromEntries(['candidate','unverified','verified','demo','withdrawn'].map(status => [status, documents.filter(d => d.status === status).length]));
@@ -86,8 +88,19 @@ export function createApp({ store = createStore(), config:fixedConfig, portalFet
       }
       if (pathname === '/api/sources' && req.method === 'GET') return json(res, 200, { sources: store.list().map(summary) });
       if (pathname === '/api/export' && req.method === 'GET') {
-        res.setHeader('Content-Disposition', 'attachment; filename="koleksi-asisten-data-depok.json"');
-        return json(res, 200, { version: 1, exportedAt: new Date().toISOString(), documents: store.list(), observations: store.observations() });
+        res.setHeader('Content-Disposition', 'attachment; filename="cadangan-asisten-data-depok.json"');
+        return json(res, 200, buildBackup(store));
+      }
+      if (pathname === '/api/restore' && req.method === 'POST') {
+        if (portalController || store.portal.coverage().lastRun?.status === 'running') throw new UserError('Hentikan sinkronisasi portal sebelum memulihkan cadangan.', 409);
+        if (reindexing) throw new UserError('Tunggu pengindeksan selesai sebelum memulihkan cadangan.', 409);
+        if (syncing) throw new UserError('Tunggu pengambilan sumber selesai sebelum memulihkan cadangan.', 409);
+        if (chatRequests) throw new UserError('Tunggu pertanyaan yang sedang diproses selesai.', 409);
+        const body = await readJson(req, MAX_BACKUP_BYTES);
+        // Accept either the backup file itself or {backup, options} for dry runs.
+        const payload = body?.backup ?? body;
+        const options = body?.options ?? {};
+        return json(res, 200, restoreBackup(store, payload, { asUnverified: options.asUnverified === true, dryRun: options.dryRun === true }));
       }
       if (pathname === '/api/sources' && req.method === 'POST') {
         if (store.list().filter(d => !['candidate','demo','withdrawn'].includes(d.status)).length >= 100) throw new UserError('Batas prototipe 100 dokumen aktif tercapai.');

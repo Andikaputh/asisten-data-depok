@@ -14,6 +14,11 @@
 .portal-issues { padding-left: 20px; }
 .portal-issues li { margin: 10px 0; overflow-wrap: anywhere; line-height: 1.6; }
 .scope-note { white-space: normal; overflow-wrap: anywhere; }
+.collection-actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.backup-restore { cursor: pointer; }
+.backup-note { font-size: 9px; color: #959aac; margin: 8px 0 0; line-height: 1.6; }
+.backup-warnings { padding-left: 20px; font-size: 11px; line-height: 1.7; color: #765515; }
+#sources-view .collection-footer { flex-wrap: wrap; gap: 10px; }
 @media (max-width: 760px) {
   .portal-coverage-note { padding: 7px 14px; font-size: 10px; }
   #portal-view .collection-tools { flex-direction: column; align-items: stretch; }

@@ -236,3 +236,24 @@ Uji pembacaan HTML sungguhan untuk **Proporsi penduduk yang menggunakan internet
 Rincian cakupan dan batas yang belum selesai terdapat pada [09-asisten-portal.md](09-asisten-portal.md). Pengujian yang lulus tidak membuktikan seluruh halaman tak tertaut, berkas, makna jawaban, maupun seluruh variasi pertanyaan sudah tercakup.
 
 Pada uji live final, metadata membutuhkan **19.528 ms**, rumus **10.926 ms**, dan satuan **11.973 ms**. Contoh pencarian anak disabilitas **41 ms**, publikasi kesehatan **27 ms**, dan dashboard sekolah **111 ms**. Pertanyaan resep ditolak tanpa model. Screenshot cakupan tersimpan pada `.artifacts/live-portal-coverage-desktop.png` dan `.artifacts/live-portal-coverage-mobile.png`.
+
+## Pembaruan: cadangan dan pemulihan (30 Oktober 2026)
+
+Revisi 0.3.1 menambahkan satu berkas cadangan JSON yang memuat dokumen, observasi, inventaris portal, halaman HTML yang sudah dibaca, metadata cakupan, dan riwayat batch. Vektor embedding tidak disertakan karena melekat pada provider/model; indeks perlu dibangun ulang setelah pemulihan bila pencarian semantik diinginkan.
+
+Pemulihan bersifat menambah/menyegarkan, bukan menghapus: ID yang sudah ada dilewati, salinan identik tidak digandakan, dan entri portal dengan identitas sama diperbarui. Sebelum menulis, hash SHA-256 setiap dokumen dan halaman diperiksa; satu ketidakcocokan membatalkan seluruh pemulihan tanpa perubahan sebagian. Hash menjaga keutuhan berkas, bukan membuktikan peninjauan manusia, sehingga hanya cadangan milik sendiri yang layak dipulihkan. Opsi `--as-unverified` menurunkan dokumen terverifikasi menjadi belum diperiksa.
+
+Hasil pengujian lokal:
+
+| Pemeriksaan | Hasil |
+| --- | --- |
+| `npm.cmd run check` | lulus |
+| `npm.cmd test` | 56/56 lulus, termasuk 9 kasus cadangan/pemulihan |
+| `npm.cmd run test:e2e` | 16 pemeriksaan lulus, termasuk unduh → pulihkan cadangan lewat workspace |
+| `npm.cmd run test:corpus` | 18/18 lulus |
+| CLI pada koleksi pilot lokal | 12 dokumen (4 terverifikasi), 5 observasi, 14 entri dan 14 halaman portal pulih ke basis data baru; berkas cadangan sekitar 301 KB |
+| CLI `--dry-run` | menghitung tanpa menulis |
+| HTTP `/api/export` → `/api/restore` | 200; jumlah dokumen, observasi, dan entri portal sama dengan sumber |
+| Berkas rusak/diubah, domain asing, versi tak dikenal | ditolak sebelum ada penulisan |
+
+Batas yang tersisa: unggahan lewat browser dibatasi 64 MB (CLI 256 MB), server harus dihentikan sebelum pemulihan CLI, dan riwayat batch yang dipulihkan tidak memiliki proses pemilik sehingga status `running` lama diubah menjadi `interrupted`.

@@ -13,6 +13,7 @@ Chatbot proyek memakai **Ollama lokal**, bukan akun ChatGPT atau model asisten c
 - Buka http://127.0.0.1:3000/ dan http://127.0.0.1:3000/chat.
 - Pilih **Koleksi publik**. Mulai percakapan baru jika perlu.
 - Buka **Workspace → Cakupan portal**. Periksa jumlah URL dataset, antrean detail, kegagalan, dan lampiran belum diekstrak. Jangan memulai sinkronisasi besar saat presentasi.
+- Unduh cadangan sekali sebelum demo: **Workspace → Koleksi sumber → Unduh cadangan**. Berkas JSON ini memuat dokumen, observasi, dan inventaris portal; jangan membagikannya karena memuat salinan koleksi lokal.
 
 Pencarian katalog tidak menunggu LLM: uji revisi 0.3 mencatat sekitar 27–111 ms untuk contoh pencarian. Penyusunan jawaban model jauh lebih lambat dan dapat mencapai puluhan detik saat model dingin atau mesin sibuk. Kedua model berjalan di CPU pada perangkat ini; tutup aplikasi berat yang tidak diperlukan, tetapi jangan menghentikan proses pribadi tanpa menyimpan pekerjaan. Tunggu jawaban selesai sebelum mengirim pertanyaan berikutnya. Ini bukan jaminan latensi atau benchmark umum.
 

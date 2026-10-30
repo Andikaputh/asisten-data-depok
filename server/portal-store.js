@@ -186,6 +186,48 @@ export function createPortalStore(db) {
       return {...card,sourceUrl:item.url,content:page?.body || item.description || item.title,description:item.description,
         provenance:JSON.stringify({method:'public_portal_inventory',discoveredFrom:item.discoveredFrom,contentStatus:card.contentStatus}),hash:page?.hash || digest(item.url),reviewedAt:null};
     },
+    // Restoring a backup replaces entries with the same identity. It does not
+    // require a fresh crawl and never converts catalog entries into evidence.
+    restore({items=[],pages=[],runs=[],metadata={}}) {
+      const counts={items:0,pages:0,runs:0,metadata:0};
+      const removeItem=db.prepare('DELETE FROM portal_items WHERE id=?');
+      const insertItem=db.prepare(`INSERT INTO portal_items(id,url,title,section,publisher,description,periodLabel,format,discoveredFrom,firstSeenAt,lastSeenAt,identityKey)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET url=excluded.url,title=excluded.title,section=excluded.section,
+        publisher=excluded.publisher,description=excluded.description,periodLabel=excluded.periodLabel,format=excluded.format,
+        discoveredFrom=excluded.discoveredFrom,firstSeenAt=excluded.firstSeenAt,lastSeenAt=excluded.lastSeenAt,identityKey=excluded.identityKey`);
+      const insertPage=db.prepare(`INSERT INTO portal_pages(url,kind,section,discoveredFrom,status,title,body,hash,attemptedAt,fetchedAt,error,attempts)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET kind=excluded.kind,section=excluded.section,
+        discoveredFrom=excluded.discoveredFrom,status=excluded.status,title=excluded.title,body=excluded.body,hash=excluded.hash,
+        attemptedAt=excluded.attemptedAt,fetchedAt=excluded.fetchedAt,error=excluded.error,attempts=excluded.attempts`);
+      db.exec('BEGIN');
+      try {
+        for(const item of items) {
+          for(const row of db.prepare('SELECT id FROM portal_items WHERE (identityKey=? OR url=?) AND id!=?').all(item.identityKey,item.url,item.id))removeItem.run(row.id);
+          insertItem.run(item.id,item.url,item.title,item.section,item.publisher,item.description,item.periodLabel,item.format,item.discoveredFrom,item.firstSeenAt,item.lastSeenAt,item.identityKey);
+          counts.items++;
+        }
+        for(const page of pages) {
+          insertPage.run(page.url,page.kind,page.section,page.discoveredFrom,page.status,page.title,page.body,page.hash,page.attemptedAt,page.fetchedAt,page.error,page.attempts);
+          counts.pages++;
+        }
+        for(const run of runs) {
+          db.prepare('INSERT OR IGNORE INTO portal_sync_runs(id,startedAt,finishedAt,status,processed,failed,note) VALUES (?,?,?,?,?,?,?)')
+            .run(run.id,run.startedAt,run.finishedAt,run.status,run.processed,run.failed,run.note);
+          counts.runs++;
+        }
+        for(const [key,value] of Object.entries(metadata)) {
+          if(key==='page_fts_version')continue;
+          portal.metadata(key,String(value));
+          counts.metadata++;
+        }
+        db.exec('DELETE FROM portal_items_fts');
+        db.exec("INSERT INTO portal_items_fts(id,title,publisher,description) SELECT id,title,publisher,description||' '||periodLabel FROM portal_items");
+        db.exec('DELETE FROM portal_pages_fts');
+        db.exec("INSERT INTO portal_pages_fts(url,title,body) SELECT url,title,body FROM portal_pages WHERE status='fetched' AND body!='' AND (kind IN ('guide','detail') OR section='gallery')");
+        db.exec('COMMIT');
+      } catch(error) {db.exec('ROLLBACK');throw error;}
+      return counts;
+    },
   };
   return portal;
 }

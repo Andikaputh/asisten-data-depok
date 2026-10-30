@@ -245,6 +245,25 @@ $('#question').addEventListener('keydown', event => { if (event.key === 'Enter' 
 $('#question').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(130,event.target.scrollHeight)}px`; });
 $('#new-chat').addEventListener('click', newChat);
 $('#import-button').addEventListener('click', openImport);
+$('#restore-file').addEventListener('change', async event => {
+  const input = event.currentTarget, file = input.files[0]; input.value = '';
+  if (!file) return;
+  if (file.size > 64 * 1024 * 1024) { toast('Berkas cadangan maksimal 64 MB; gunakan pemulihan lewat CLI untuk berkas besar.'); return; }
+  let backup;
+  try { backup = JSON.parse(await file.text()); } catch { toast('Berkas bukan JSON yang valid.'); return; }
+  const summary = backup.summary || {};
+  const details = `${summary.documents ?? '?'} dokumen · ${summary.observations ?? '?'} observasi · ${summary.portalItems ?? '?'} entri portal · ${summary.portalPages ?? '?'} halaman`;
+  const stamp = backup.exportedAt && !Number.isNaN(Date.parse(backup.exportedAt)) ? ` dari ${date(backup.exportedAt)}` : '';
+  if (!confirm(`Pulihkan cadangan${stamp}?\n\n${details}\n\nData yang sudah ada tidak dihapus. Status verifikasi ikut dari berkas; pulihkan hanya cadangan milik sendiri.`)) return;
+  try {
+    const result = await post('/api/restore', { backup });
+    await refreshSources();
+    if (!$('#portal-view').hidden) await refreshPortal();
+    const warnings = (result.warnings || []).map(item => `<li>${esc(item)}</li>`).join('');
+    openDialog('Cadangan dipulihkan', `<div class="collection-notice">${icon('check')}<p><strong>${result.documents.added}</strong> dokumen ditambahkan, <strong>${result.documents.duplicate + result.documents.skipped}</strong> sudah ada atau dilewati. <strong>${result.portal.items}</strong> entri dan <strong>${result.portal.pages}</strong> halaman portal dipulihkan.</p></div>${warnings ? `<ul class="backup-warnings">${warnings}</ul>` : ''}<p class="muted">Bangun ulang indeks embedding bila ingin pencarian semantik pada dokumen yang dipulihkan.</p>`);
+    toast('Cadangan dipulihkan. Periksa ringkasan sebelum memakai koleksi.');
+  } catch (error) { toast(error.message); }
+});
 $('#source-search').addEventListener('input', renderSources);
 $('#refresh-status').addEventListener('click', () => refreshStatus().then(() => toast('Status koneksi diperbarui.')).catch(error => toast(error.message)));
 $('#use-model').addEventListener('change', event => { useModel = event.target.checked; saveLocal('depok:model:v1', useModel); $('#engine-label').textContent = useModel ? `LLM · ${status?.model?.provider==='openai'?'OpenAI API':status?.model?.provider==='openai-compatible'?'API kompatibel OpenAI':'Ollama'}` : 'Pencarian lokal · tanpa API'; });

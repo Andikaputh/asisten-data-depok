@@ -1,6 +1,6 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createApp } from '../server/index.js';
 import { createStore } from '../server/store.js';
 
@@ -20,6 +20,7 @@ try {
   const errors = [];
   page.on('pageerror',error => errors.push(error.message));
   page.on('console',message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('dialog',dialog => dialog.accept());
   await page.goto(base+'/workspace'); await page.locator('#nav-count').filter({hasText:'6'}).waitFor();
   assert.equal(await page.title(),'Asisten Data Depok — Ruang pengelolaan');
   await page.screenshot({path:'.artifacts/asisten-data-desktop.png',fullPage:true});
@@ -71,6 +72,22 @@ try {
   await page.locator('#send-button').click();
   await page.getByText('Saya belum menemukan nilai terverifikasi yang cocok',{exact:false}).waitFor();
   console.log('PASS Sumber dinonaktifkan langsung dikeluarkan dari jawaban baru');
+
+  // Backup → restore through the workspace UI. The in-memory corpus keeps this disposable.
+  const exported = await (await fetch(base+'/api/export')).json();
+  const backupFile = '.artifacts/uji-cadangan.json';
+  writeFileSync(backupFile, JSON.stringify(exported));
+  const before = await (await fetch(base+'/api/status')).json();
+  await page.locator('.nav-item[data-view="sources"]').click();
+  await page.locator('#restore-file').setInputFiles(backupFile);
+  await page.locator('#dialog-title').filter({hasText:'Cadangan dipulihkan'}).waitFor();
+  assert.match(await page.locator('#dialog-content').innerText(),/sudah ada atau dilewati/);
+  await page.locator('.dialog-header .close-dialog').click();
+  const after = await (await fetch(base+'/api/status')).json();
+  assert.deepEqual(after.counts,before.counts);
+  assert.equal(after.observations,before.observations);
+  assert.equal(after.portal.items,before.portal.items);
+  console.log('PASS Cadangan diunduh dan dipulihkan lewat workspace tanpa menggandakan data');
 
   const mobile = await browser.newPage({viewport:{width:390,height:844},isMobile:true,deviceScaleFactor:1});
   mobile.on('pageerror',error => errors.push(error.message));

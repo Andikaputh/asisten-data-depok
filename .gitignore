@@ -4,6 +4,7 @@ node_modules/
 !.env.example
 data/*.sqlite*
 data/*.db*
+data/backups/
 coverage/
 *.log
 .artifacts/

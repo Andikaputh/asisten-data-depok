@@ -58,6 +58,22 @@ export function createStore(filename = 'data/corpus.sqlite', seed = true) {
   const columns=new Set(db.prepare('PRAGMA table_info(documents)').all().map(column=>column.name));
   for(const column of ['sourceUpdatedAt','provenance'])if(!columns.has(column))db.exec(`ALTER TABLE documents ADD COLUMN ${column} TEXT`);
 
+  // Shared by add() and restoreDocuments(): the caller owns the transaction.
+  function insertDocument(document, observations = []) {
+    const keys = ['id','title','kind','publisher','sourceUrl','description','content','status','year','region','unit','filename','retrievedAt','reviewedAt','reviewer','hash','version','sourceUpdatedAt','provenance'];
+    db.prepare(`INSERT INTO documents (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...keys.map(key => document[key]));
+    const chunks = splitText(document.content);
+    // Empty catalog records are searchable for discovery, never eligible for grounded answers.
+    if (!chunks.length && document.description) chunks.push(document.description);
+    chunks.forEach((text, position) => {
+      const id = `${document.id}:${position + 1}`;
+      db.prepare('INSERT INTO chunks(id,documentId,position,text) VALUES (?,?,?,?)').run(id, document.id, position, text);
+      db.prepare('INSERT INTO chunks_fts(id,documentId,title,text) VALUES (?,?,?,?)').run(id, document.id, document.title, text);
+    });
+    const insertRow = db.prepare('INSERT INTO observations(documentId,indicator,year,region,valueRaw,value,unit,rowNumber) VALUES (?,?,?,?,?,?,?,?)');
+    for (const row of observations) insertRow.run(document.id, row.indicator, row.year, row.region, row.valueRaw, row.value, row.unit, row.rowNumber);
+  }
+
   const store = {
     db,
     portal:createPortalStore(db),
@@ -81,21 +97,27 @@ export function createStore(filename = 'data/corpus.sqlite', seed = true) {
       if (existing) return { document: existing, duplicate: true };
       db.exec('BEGIN');
       try {
-        const keys = ['id','title','kind','publisher','sourceUrl','description','content','status','year','region','unit','filename','retrievedAt','reviewedAt','reviewer','hash','version','sourceUpdatedAt','provenance'];
-        db.prepare(`INSERT INTO documents (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...keys.map(key => document[key]));
-        const chunks = splitText(document.content);
-        // Empty catalog records are searchable for discovery, never eligible for grounded answers.
-        if (!chunks.length && document.description) chunks.push(document.description);
-        chunks.forEach((text, position) => {
-          const id = `${document.id}:${position + 1}`;
-          db.prepare('INSERT INTO chunks(id,documentId,position,text) VALUES (?,?,?,?)').run(id, document.id, position, text);
-          db.prepare('INSERT INTO chunks_fts(id,documentId,title,text) VALUES (?,?,?,?)').run(id, document.id, document.title, text);
-        });
-        const insertRow = db.prepare('INSERT INTO observations(documentId,indicator,year,region,valueRaw,value,unit,rowNumber) VALUES (?,?,?,?,?,?,?,?)');
-        for (const row of observations) insertRow.run(document.id, row.indicator, row.year, row.region, row.valueRaw, row.value, row.unit, row.rowNumber);
+        insertDocument(document, observations);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return { document, duplicate: false };
+    },
+    // Restore is additive: existing IDs and identical copies are kept untouched.
+    restoreDocuments(documents, observationsByDocument) {
+      const counts = { added:0, duplicate:0, skipped:0, observations:0 };
+      const duplicateQuery = db.prepare("SELECT id FROM documents WHERE hash=? AND sourceUrl=? AND status!='withdrawn' AND content!=''");
+      db.exec('BEGIN');
+      try {
+        for (const document of documents) {
+          if (store.get(document.id)) { counts.skipped++; continue; }
+          if (duplicateQuery.get(document.hash, document.sourceUrl)) { counts.duplicate++; continue; }
+          const observations = observationsByDocument.get(document.id) || [];
+          insertDocument(document, observations);
+          counts.added++; counts.observations += observations.length;
+        }
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      return counts;
     },
     verify(id, reviewer) {
       db.prepare("UPDATE documents SET status='verified',reviewer=?,reviewedAt=? WHERE id=? AND status='unverified' AND content!=''").run(reviewer, new Date().toISOString(), id);
@@ -107,6 +129,10 @@ export function createStore(filename = 'data/corpus.sqlite', seed = true) {
     },
     observations() {
       return db.prepare("SELECT o.*,d.title,d.sourceUrl,d.publisher,d.version,d.retrievedAt FROM observations o JOIN documents d ON d.id=o.documentId WHERE d.status='verified'").all();
+    },
+    // Backup needs every row, including observations of sources that are not verified.
+    allObservations() {
+      return db.prepare("SELECT o.*,d.title,d.sourceUrl,d.publisher,d.version,d.retrievedAt FROM observations o JOIN documents d ON d.id=o.documentId ORDER BY o.documentId,o.rowNumber").all();
     },
     setVector(id, vector, model) { db.prepare('UPDATE chunks SET vector=?,embeddingModel=? WHERE id=?').run(JSON.stringify(vector), model, id); },
     logRun(run) {
