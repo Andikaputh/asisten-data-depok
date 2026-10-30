@@ -13,6 +13,7 @@ Simulasi portal Satu Data Kota Depok dengan popup dan halaman percakapan penuh, 
 - Revisi 0.3 menambahkan inventaris portal yang terpisah dari korpus statistik terverifikasi: dataset, kategori, organisasi, publikasi, infografis, dashboard, galeri, dan panduan. Snapshot lokal 29 Oktober 2026 mencatat **2.242 URL dataset**. Ini cakupan katalog, **bukan klaim semua isi website atau berkas sudah dipahami**.
 - Pencarian dan navigasi katalog tidak memerlukan LLM. Pertanyaan di luar ruang lingkup ditolak; hasil kosong tidak dinyatakan sebagai bukti data tidak ada. Halaman detail HTML yang relevan dapat dibaca sesuai permintaan, dengan status pembacaan yang berbeda dari verifikasi manual.
 - Revisi 0.3.1 menambahkan **cadangan dan pemulihan** dokumen, observasi, serta inventaris portal dalam satu berkas JSON. Setiap isi diperiksa hash-nya sebelum ditulis, status verifikasi ikut dipulihkan, dan tersedia lewat workspace maupun CLI.
+- Revisi 0.4.0 menambahkan **ekstraksi teks lampiran PDF/XLSX** dari portal. Hasilnya berstatus `attachment-read` (otomatis, belum ditinjau), bukan verifikasi manual; tidak ada OCR, dan berkas yang terpotong tidak dipakai untuk pencarian.
 
 ## Jalankan
 
@@ -129,19 +130,25 @@ npm.cmd run portal:sync -- --max-pages=40 --delay=1000
 Jalankan batch berikutnya untuk melanjutkan antrean; jangan menjalankan dua sinkronisasi bersamaan. Alternatif: buka **Workspace → Cakupan portal**. Tombol **Lanjutkan 40 halaman** berjalan di latar belakang dan dapat dihentikan. Opsi **Ikut membaca halaman detail HTML** melanjutkan pembacaan detail setelah katalog/panduan yang antre selesai.
 
 ```powershell
-# Ikut membaca detail HTML, bukan otomatis mengunduh semua lampiran:
+# Ikut membaca detail HTML:
 npm.cmd run portal:sync -- --max-pages=40 --details
+# Ekstrak teks maksimal 5 lampiran PDF/XLSX setelah antrean halaman:
+npm.cmd run portal:sync -- --max-pages=40 --attachments --max-attachments=5
+# Detail + lampiran dalam satu batch:
+npm.cmd run portal:sync -- --max-pages=40 --details --attachments
 # Perbarui halaman daftar/panduan yang pernah dibaca; antrean tetap bertahap:
 npm.cmd run portal:sync -- --max-pages=40 --refresh
 ```
 
+Ekstraksi lampiran berjalan pada fase terpisah setelah antrean halaman, dengan jeda dan batas per batch. PDF dibaca dengan `unpdf`, XLSX dengan `read-excel-file`; arsip yang mengaku berukuran sangat besar ditolak sebelum parser dijalankan. Batas berkas 20 MB, teks 2 juta karakter, dan 5 lampiran per batch (maksimal 20 lewat API/CLI). Teks yang terpotong disimpan sebagai `partial` tetapi **tidak** masuk indeks pencarian. Lampiran gambar, CSV, dan `.xls` lama dilewati tanpa diunduh.
+
 - Sumber hanya berasal dari halaman publik portal yang diizinkan. URL login, formulir permohonan, kredensial di URL, serta redirect keluar daftar izin tidak diikuti.
 - Jika `robots.txt` tersedia, aturannya diperiksa. Jika ditolak/tidak terbaca, ketidakpastian itu dicatat; ini **bukan bukti izin**. Koordinasikan sinkronisasi massal/berkala dengan pengelola dan utamakan API/ekspor resmi jika disediakan.
 - HTTP 429 atau tiga kegagalan berurutan menghentikan batch. Gagal, dibatasi, kosong, sebagian, dan antrean belum diproses tetap terlihat.
-- Tidak melakukan OCR gambar, ekstraksi PDF/XLSX umum, atau pembacaan isi layanan Tableau/BPS eksternal secara otomatis. Tautannya dapat ditemukan tanpa mengaku sudah memahami isinya.
+- Ekstraksi lampiran hanya mengambil teks PDF/XLSX. Tidak ada OCR gambar, penafsiran tabel hasil pindai, eksekusi makro, atau pembacaan isi layanan Tableau/BPS eksternal secara otomatis. Tautan eksternal dapat ditemukan tanpa mengaku sudah memahami isinya.
 - Penelusuran ini belum membuktikan kelengkapan terhadap halaman tak tertaut atau API dinamis. `websiteComplete` sengaja tetap `false`.
 
-Tingkat bukti dibedakan: **Terdaftar di portal** (judul/tautan), **HTML terbaca · belum ditinjau** (kutipan halaman otomatis), dan **Terverifikasi** (korpus yang ditinjau lokal). Tanggal pembaruan dan periode katalog tidak dipakai sebagai nilai statistik.
+Tingkat bukti dibedakan: **Terdaftar di portal** (judul/tautan), **HTML terbaca · belum ditinjau** (kutipan halaman otomatis), **Lampiran terbaca · belum ditinjau** (teks PDF/XLSX hasil ekstraksi otomatis), dan **Terverifikasi** (korpus yang ditinjau lokal). Tanggal pembaruan dan periode katalog tidak dipakai sebagai nilai statistik.
 
 Rancangan dan batas implementasi: [docs/09-asisten-portal.md](docs/09-asisten-portal.md).
 
@@ -282,19 +289,21 @@ Jalur utama workspace ini adalah Ollama; lihat [Aktifkan model lokal Ollama](#ak
 | `server/chat.js`, `retrieval.js` | Routing pertanyaan, pencarian, konteks dan nilai tabel |
 | `server/model.js`, `grounding.js`, `indexing.js` | API LLM/embedding, validasi klaim dan indeks |
 | `server/public-sources.js` | Pengambilan dan parser sumber publik terkurasi |
+| `server/attachments.js`, `server/extract.js` | Ekstraksi aman teks PDF/XLSX dan sinkronisasi lampiran portal |
 | `server/backup.js`, `scripts/backup.mjs`, `scripts/restore.mjs` | Cadangan JSON dan pemulihan dokumen serta inventaris portal |
 | `server/portal-store.js`, `portal-sync.js`, `portal-chat.js` | Inventaris, antrean sinkronisasi, pencarian, ruang lingkup dan pembacaan halaman portal |
 | `server/store.js` | SQLite, versi/hash, observasi dan catatan panggilan |
 | `data/corpus.sqlite` | Koleksi lokal; diabaikan Git |
 | `data/raw/` | Salinan mentah untuk pemeriksaan; diabaikan Git |
 | `data/reviewed-public-sources.json` | URL/hash snapshot yang diperiksa dan batasannya |
-| `docs/` | Proposal, desain, dan laporan verifikasi |
+| `docs/` | Proposal, desain, checklist, dan laporan verifikasi |
+| `PANDUAN-PENGAPLIKASIAN-MENTOR.md` | Panduan lengkap arsitektur, pengaplikasian, dan demo untuk mentor |
 
 Kunci tidak dikirim ke browser. Jalur Ollama tidak memerlukan kunci sama sekali. Diagnostik hanya memuat status konfigurasi, model, jumlah indeks, dan hasil panggilan. Log aplikasi menyimpan waktu, status, kode galat, serta penggunaan token respons LLM; tidak menyimpan API key atau pertanyaan mentah. Permintaan OpenAI menggunakan store:false; ini tidak menjadi klaim bahwa seluruh kebijakan retensi penyedia ditiadakan.
 
 ## Batas dan serah terima
 
-Korpus statistik terverifikasi masih kecil, meskipun inventaris katalog jauh lebih luas. Pengumpulan HTML tersedia secara bertahap, tetapi belum ada ekstraksi PDF/XLSX umum, OCR, perhitungan lintas baris, atau penjadwalan sinkronisasi otomatis. Filter ruang lingkup dan pemeriksaan mekanis belum membuktikan semua pertanyaan/adversarial prompt pasti tertangani. Tahun observasi tidak disimpulkan dari tanggal pembaruan. Riwayat lama merupakan snapshot; periksa sumber terkini jika kemudian berubah.
+Korpus statistik terverifikasi masih kecil, meskipun inventaris katalog jauh lebih luas. Pengumpulan HTML dan ekstraksi teks PDF/XLSX (v0.4.0) tersedia secara bertahap dengan status baca otomatis (`attachment-read`), namun belum ada OCR gambar/scan, penafsiran .xls lama, perhitungan agregasi lintas baris, atau penjadwalan otomatis di luar inisiasi operator. Filter ruang lingkup dan pemeriksaan mekanis belum membuktikan semua pertanyaan/adversarial prompt pasti tertangani. Tahun observasi tidak disimpulkan dari tanggal pembaruan. Riwayat lama merupakan snapshot; periksa sumber terkini jika kemudian berubah.
 
 Workspace belum memakai autentikasi multi-pengguna dan hanya ditujukan untuk lingkungan lokal. Jangan membuka server ini ke publik tanpa menambahkan autentikasi pengelolaan, pembatasan pemakaian, dan peninjauan operasional. Batas prototipe: 100 dokumen aktif, 500 ribu karakter/dokumen, CSV maksimal 5000 baris.
 

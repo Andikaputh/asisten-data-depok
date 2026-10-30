@@ -13,7 +13,7 @@ const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 function hydrateIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML = icon(element.dataset.icon); }); }
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safeUrl = value => { try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : ''; } catch { return ''; } };
-const statusNames = { verified:'Terverifikasi',unverified:'Belum diperiksa',candidate:'Kandidat',demo:'Latihan',withdrawn:'Nonaktif',catalogued:'Terdaftar di portal','portal-read':'HTML terbaca · belum ditinjau' };
+const statusNames = { verified:'Terverifikasi',unverified:'Belum diperiksa',candidate:'Kandidat',demo:'Latihan',withdrawn:'Nonaktif',catalogued:'Terdaftar di portal','portal-read':'HTML terbaca · belum ditinjau','attachment-read':'Lampiran terbaca · belum ditinjau' };
 const badge = status => `<span class="badge ${esc(status)}">${esc(statusNames[status] || status)}</span>`;
 const date = value => value ? new Intl.DateTimeFormat('id-ID', { dateStyle:'medium', timeZone:'Asia/Jakarta' }).format(new Date(value)) : 'Belum diketahui';
 let toastTimer;
@@ -189,9 +189,13 @@ async function openSource(id) {
       try { await post(`/api/sources/${encodeURIComponent(id)}/withdraw`, {}); await refreshSources(); await openSource(id); toast('Sumber dinonaktifkan. Riwayat lama tetap perlu diperiksa ulang.'); }
       catch (error) { toast(error.message); if ($('#withdraw-source')) $('#withdraw-source').disabled = false; }
     });
-    if(['catalogued','portal-read'].includes(source.status)) {
+    if(['catalogued','portal-read','attachment-read'].includes(source.status)) {
+      const reading=source.contentStatus==='read'?'halaman HTML sudah dibaca otomatis, belum ditinjau manual'
+        :source.contentStatus==='attachment_read'?'isi lampiran sudah diekstrak otomatis, belum ditinjau manual'
+        :source.contentStatus==='attachment_partial'?'sebagian isi lampiran diekstrak tetapi dipotong; tidak dipakai untuk pencarian'
+        :'hanya katalog/tautan; isi berkas belum dibaca';
       const note=document.createElement('p');note.className='verification-warn';
-      note.textContent=`Inventaris portal · ${source.contentStatus==='read'?'halaman HTML sudah dibaca otomatis, belum ditinjau manual':'hanya katalog/tautan; isi berkas belum dibaca'}. ${source.format || 'HTML'}${source.periodLabel?` · periode yang tertulis di katalog: ${source.periodLabel}`:''}. Ini bukan bukti nilai observasi statistik.`;
+      note.textContent=`Inventaris portal · ${reading}. ${source.format || 'HTML'}${source.periodLabel?` · periode yang tertulis di katalog: ${source.periodLabel}`:''}. ${source.extractor?`Ekstraksi: ${source.extractor}. `:''}Ini bukan bukti nilai observasi statistik; periksa berkas asli untuk angka dan konteks.`;
       $('#dialog-content').prepend(note);
     }
   } catch (error) { toast(error.message); }
@@ -206,12 +210,12 @@ async function refreshPortal() {
   const [coverage,result]=await Promise.all([api('/api/portal/status'),api(`/api/portal/${query?'search':'items'}?${params}`)]);
   portalTotal=result.total ?? result.items.length;
   const read=coverage.contentPages || 0;
-  const stats=[[`${coverage.datasets} / ${coverage.reportedDatasets || '—'}`,'URL dataset / label jumlah portal'],[coverage.items,'Entri termasuk navigasi'],[read,'Panduan/detail/galeri HTML terbaca'],[coverage.unreadAttachments,'Lampiran belum diekstrak']];
+  const stats=[[`${coverage.datasets} / ${coverage.reportedDatasets || '—'}`,'URL dataset / label jumlah portal'],[coverage.items,'Entri termasuk navigasi'],[read,'Panduan/detail/galeri HTML terbaca'],[coverage.readAttachments || 0,'Lampiran PDF/XLSX terbaca'],[coverage.unreadAttachments,'Lampiran menunggu ekstraksi']];
   $('#portal-stats').innerHTML=stats.map(([value,label])=>`<div class="stat-card"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
   $('#portal-nav-count').textContent=coverage.items;
   const run=coverage.lastRun;
-  $('#portal-progress').textContent=`${coverage.running?'Sedang berjalan. ':''}${run?`Batch terakhir: ${run.status}, ${run.processed} halaman, ${run.failed} gagal. ${run.note}`:'Belum ada sinkronisasi.'} Antrean: ${coverage.pending}; gagal/dibatasi: ${coverage.failed+coverage.blocked}; sebagian: ${coverage.partial}.`;
-  $('#portal-policy').textContent=`Seluruh website belum dinyatakan selesai dipahami. Robots: ${coverage.robots}. Tautan eksternal: ${coverage.external}; halaman kosong: ${coverage.empty}; pagination dilewati: ${coverage.skipped}.`;
+  $('#portal-progress').textContent=`${coverage.running?'Sedang berjalan. ':''}${run?`Batch terakhir: ${run.status}, ${run.processed} halaman/lampiran, ${run.failed} gagal. ${run.note}`:'Belum ada sinkronisasi.'} Antrean: ${coverage.pending}; gagal/dibatasi: ${coverage.failed+coverage.blocked}; sebagian: ${coverage.partial}.`;
+  $('#portal-policy').textContent=`Seluruh website belum dinyatakan selesai dipahami. Robots: ${coverage.robots}. Tautan eksternal: ${coverage.external}; halaman kosong: ${coverage.empty}; pagination dilewati: ${coverage.skipped}. Lampiran: ${coverage.readAttachments || 0} terbaca, ${coverage.partialAttachments || 0} sebagian, ${coverage.skippedAttachments || 0} dilewati (gambar/CSV/.xls).`;
   $('#portal-sync-button').disabled=coverage.running;$('#portal-refresh-button').disabled=coverage.running;$('#portal-stop-button').disabled=!coverage.running;
   $('#portal-items').innerHTML=result.items.length?result.items.map(item=>`<article class="source-row"><span class="source-file-icon">${icon('file')}</span><div class="source-info"><h3>${esc(item.title)}</h3><p>${esc(item.publisher)} · ${esc(item.kind)} · ${esc(item.format)}${item.periodLabel?` · periode katalog ${esc(item.periodLabel)}`:''}</p></div><div class="source-row-actions">${badge(item.status)}<button class="icon-button" data-source-id="${esc(item.documentId)}" aria-label="Buka ${esc(item.title)}">${icon('arrow-up-right')}</button></div></article>`).join(''):'<p class="empty-state">Belum ada entri yang cocok. Hasil kosong bukan berarti sumber tidak ada di website.</p>';
   $('#portal-page-note').textContent=query?`${result.items.length} hasil paling relevan`:`${portalTotal?portalOffset+1:0}–${Math.min(portalOffset+20,portalTotal)} dari ${portalTotal} entri`;
@@ -220,7 +224,7 @@ async function refreshPortal() {
   if(coverage.running && !$('#portal-view').hidden)portalTimer=setTimeout(()=>refreshPortal().catch(error=>toast(error.message)),3000);
 }
 async function startPortalSync(refresh=false) {
-  try {await post('/api/portal/sync',{maxPages:40,includeDetails:$('#portal-details').checked,refresh});await refreshPortal();toast('Sinkronisasi berjalan bertahap; sumber yang gagal tetap tercatat.');}
+  try {await post('/api/portal/sync',{maxPages:40,includeDetails:$('#portal-details').checked,includeAttachments:$('#portal-attachments').checked,maxAttachments:5,refresh});await refreshPortal();toast('Sinkronisasi berjalan bertahap; sumber yang gagal tetap tercatat.');}
   catch(error){toast(error.message);}
 }
 $('#portal-sync-button').addEventListener('click',()=>startPortalSync());

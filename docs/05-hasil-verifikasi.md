@@ -257,3 +257,26 @@ Hasil pengujian lokal:
 | Berkas rusak/diubah, domain asing, versi tak dikenal | ditolak sebelum ada penulisan |
 
 Batas yang tersisa: unggahan lewat browser dibatasi 64 MB (CLI 256 MB), server harus dihentikan sebelum pemulihan CLI, dan riwayat batch yang dipulihkan tidak memiliki proses pemilik sehingga status `running` lama diubah menjadi `interrupted`.
+
+## Pembaruan: ekstraksi teks lampiran PDF & XLSX (30 Oktober 2026)
+
+Revisi 0.4.0 menambahkan pembacaan isi teks lampiran publik dari portal (format PDF menggunakan `unpdf` dan XLSX menggunakan `read-excel-file/node`). Ekstraksi berjalan pada fase mandiri terpisah setelah antrean halaman portal selesai, guna mencegah berkas besar menghambat alur katalog utama.
+
+Pengamanan dan batas implementasi:
+1. **Deteksi format berbasis isi (*magic bytes*):** Memeriksa byte awal berkas (`%PDF-`, *ZIP central directory* untuk XLSX) dan bukan sekadar ekstensi URL. Halaman HTML error portal (misalnya *Request Rejected* atau CAPTCHA) yang disamarkan sebagai `.pdf` dideteksi dini dan dicatat sebagai `blocked`, bukan dipaksa masuk ke parser.
+2. **Mitigasi *Zip Bomb* & Dekompresi Berlebih:** Struktur direktori ZIP dipindai sebelum parser XLSX membaca berkas. Menolak arsip terenkripsi, ZIP64, arsip dengan lebih dari 5.000 entri, atau deklarasi ukuran tak terkompresi melebihi 100 MB.
+3. **Batas Ukuran & Karakter:** Ukuran unduh berkas dibatasi maksimal 20 MB; batas teks hasil ekstraksi maksimal 2.000.000 karakter per berkas (PDF maksimal 5.000 halaman; XLSX maksimal 50.000 baris × 200 kolom). Berkas yang teksnya terpotong (*truncated*) disimpan dengan status `partial` untuk audit, tetapi **tidak** dimasukkan ke indeks pencarian FTS5 agar tidak menghasilkan jawaban tidak utuh.
+4. **Tanpa OCR & Tanpa Eksekusi:** PDF tanpa teks dapat diekstrak dilaporkan `empty` tanpa mencoba OCR. Gambar, dokumen `.xls` lama, `.docx`, dan arsip `.zip` umum dilewati (*skipped*) tanpa permintaan unduhan jaringan yang sia-sia.
+5. **Tingkatan Bukti Jujur:** Hasil ekstraksi otomatis diberi status `attachment-read` ("Lampiran terbaca · belum ditinjau"), terpisah secara tegas dari status `portal-read` (halaman HTML) dan `verified` (tabel statistik lokal yang ditinjau manual).
+
+Hasil pengujian lokal:
+
+| Pemeriksaan | Hasil |
+| --- | --- |
+| `npm.cmd run check` | lulus (TypeScript & sintaks browser vanilla) |
+| `npm.cmd test` | 70/70 lulus (termasuk 14 pengujian baru untuk inspeksi format, ekstraksi aman, crawler lampiran, dan integrasi cadangan) |
+| `npm.cmd run test:e2e` | 17 pemeriksaan Playwright lulus (termasuk verifikasi kartu lampiran terbaca di mobile/desktop tanpa kebocoran status verified) |
+| `npm.cmd run test:corpus` | 18/18 lulus |
+| Keamanan arsip liar | *Lying zip* (klaim 150 MB) berhasil ditolak sebelum dekompresi |
+| Cadangan v3 | Metadata ekstraksi (`contentType`, `bytes`, `extractor`) berhasil diekspor dan dipulihkan dengan hash utuh |
+

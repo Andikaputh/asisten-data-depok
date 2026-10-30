@@ -1,5 +1,6 @@
 import {load} from 'cheerio';
 import {setTimeout as delay} from 'node:timers/promises';
+import {MAX_ATTACHMENTS_PER_BATCH,syncAttachments} from './attachments.js';
 
 export const PORTAL_ORIGIN='https://satudata.depok.go.id';
 export const PORTAL_SECTIONS=[
@@ -134,7 +135,7 @@ export async function readPortalDetail(store,url,{fetcher=fetch}={}) {
   try {
     const target=portalUrl(url),rules=JSON.parse(store.portal.metadata('robotsRules') || '[]');
     if(!robotsAllow(target.href,rules))throw new PortalSyncError('Dilarang oleh robots.txt.','access_rejected');
-    const response=await fetcher(target.href,{headers:{'User-Agent':'AsistenDataDepok/0.3 (public portal inventory)','Accept':'text/html'},redirect:'manual',signal:AbortSignal.timeout(20000)});
+    const response=await fetcher(target.href,{headers:{'User-Agent':'AsistenDataDepok/0.4 (public portal inventory)','Accept':'text/html'},redirect:'manual',signal:AbortSignal.timeout(20000)});
     if(response.status>=300 && response.status<400)throw new PortalSyncError('Pengalihan URL perlu ditinjau.','redirect_rejected');
     if(response.ok && !/text\/html/i.test(response.headers.get('content-type') || ''))throw new PortalSyncError('Sumber bukan halaman HTML.','unsupported_format');
     store.portal.savePage(url,parsePortalPage(await readResponse(response),page));
@@ -169,11 +170,12 @@ export function robotsAllow(url,rules) {
   return !matched.length || matched[0].allow;
 }
 
-export async function syncPortal(store,{fetcher=fetch,maxPages=40,includeDetails=false,delayMs=900,refresh=false,signal,onProgress}={}) {
+export async function syncPortal(store,{fetcher=fetch,maxPages=40,includeDetails=false,includeAttachments=false,maxAttachments=5,delayMs=900,refresh=false,signal,onProgress}={}) {
   if(!Number.isInteger(maxPages) || maxPages<1 || maxPages>10000)throw new PortalSyncError('Batas halaman harus 1–10000.','invalid_limit');
   if(!Number.isFinite(delayMs) || delayMs<500)throw new PortalSyncError('Jeda minimal 500 ms agar tidak membebani portal.','invalid_delay');
+  if(includeAttachments && (!Number.isInteger(maxAttachments) || maxAttachments<1 || maxAttachments>MAX_ATTACHMENTS_PER_BATCH))throw new PortalSyncError(`Batas lampiran harus 1–${MAX_ATTACHMENTS_PER_BATCH}.`,'invalid_limit');
   const portal=store.portal,run=portal.startRun();let processed=0,failed=0,consecutiveFailures=0,rules=[];
-  const headers={'User-Agent':'AsistenDataDepok/0.3 (public portal inventory)','Accept':'text/html,text/plain'};
+  const headers={'User-Agent':'AsistenDataDepok/0.4 (public portal inventory)','Accept':'text/html,text/plain'};
   try {
     try {
       const response=await fetcher(PORTAL_ORIGIN+'/robots.txt',{headers,redirect:'manual',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});
@@ -182,7 +184,7 @@ export async function syncPortal(store,{fetcher=fetch,maxPages=40,includeDetails
       rules=robotsRules(text);portal.metadata('robots','available');portal.metadata('robotsRules',JSON.stringify(rules));
     } catch {portal.metadata('robots','unavailable: kebijakan tidak berhasil dibaca; koordinasikan pengambilan massal dengan pengelola.');}
     portal.reconcilePagination();
-    if(refresh)portal.refreshPages(includeDetails);
+    if(refresh)portal.refreshPages(includeDetails,includeAttachments);
     for(const [section,path,,kind] of PORTAL_SECTIONS)portal.queue(PORTAL_ORIGIN+path,kind,section,'',refresh);
     while(processed<maxPages) {
       signal?.throwIfAborted();
@@ -207,8 +209,16 @@ export async function syncPortal(store,{fetcher=fetch,maxPages=40,includeDetails
       }
       processed++;portal.updateRun(run.id,processed,failed);onProgress?.({processed,failed,url:page.url});
     }
-    const pending=portal.nextPage(includeDetails,false,run.startedAt);
-    portal.finishRun(run.id,pending?'paused':failed?'completed_with_errors':'completed',pending?'Batas batch tercapai; lanjutkan antrean pada batch berikutnya.':'Antrean yang dipilih selesai. Ini bukan klaim seluruh konten dan lampiran website sudah dibaca.');
+    // Attachments are a separate phase: one large PDF must not delay the page
+    // queue, and the per-batch cap keeps a crawl from becoming a bulk download.
+    let attachments={processed:0,failed:0};
+    if(includeAttachments && !signal?.aborted) {
+      attachments=await syncAttachments(store,{fetcher,maxAttachments,delayMs,signal,rules,
+        onProgress:progress=>onProgress?.({...progress,phase:'attachments'})});
+      processed+=attachments.processed;failed+=attachments.failed;portal.updateRun(run.id,processed,failed);
+    }
+    const pending=portal.nextPage(includeDetails,false,run.startedAt) || (includeAttachments?portal.nextAttachment():null);
+    portal.finishRun(run.id,pending?'paused':failed?'completed_with_errors':'completed',pending?'Batas batch tercapai; lanjutkan antrean pada batch berikutnya.':'Antrean yang dipilih selesai. Ini bukan klaim seluruh konten website sudah dipahami; status baca lampiran tetap berbeda dari verifikasi manual.');
   } catch(error) {
     portal.finishRun(run.id,signal?.aborted?'cancelled':'failed','Sinkronisasi terhenti; entri sebelumnya tetap disimpan.');throw error;
   }

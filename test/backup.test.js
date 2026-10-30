@@ -160,6 +160,29 @@ test('validasi menolak domain halaman asing, URL tidak aman, dan versi tak diken
   } finally { source.store.close(); target.close(); }
 });
 
+test('cadangan memuat hasil ekstraksi lampiran beserta status bacanya', () => {
+  const source = fixture();
+  const target = createStore(':memory:', false);
+  const url = PORTAL_ORIGIN + '/upload/file/profil-kesehatan.pdf';
+  try {
+    source.store.portal.queue(url, 'attachment', 'publication');
+    source.store.portal.saveAttachment(url, {
+      format:'pdf', text:'Profil kesehatan Kota Depok memuat indikator sampah.', contentType:'application/pdf', bytes:12345, detail:{ pages:12 },
+    });
+    const backup = buildBackup(source.store);
+    assert.equal(backup.summary.attachmentPages, 1);
+    assert.match(restoreBackup(target, backup).warnings.join(' '), /lampiran/i);
+
+    const page = target.portal.getPage(url);
+    assert.equal(page.status, 'fetched');
+    assert.equal(page.contentType, 'application/pdf');
+    assert.equal(page.bytes, 12345);
+    assert.match(page.extractor, /PDF/);
+    assert.ok(target.portal.readSearch('profil kesehatan').some(row => row.url === url));
+    assert.equal(target.portal.card(target.portal.getByUrl(url) || { url }).status, 'attachment-read');
+  } finally { source.store.close(); target.close(); }
+});
+
 test('endpoint HTTP mengekspor dan memulihkan cadangan lengkap', async () => {
   const source = fixture();
   const target = createStore(':memory:', false);

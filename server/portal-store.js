@@ -48,9 +48,13 @@ export function createPortalStore(db) {
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS portal_item_identity ON portal_items(identityKey)');
   }
   if(!db.prepare('PRAGMA table_info(portal_sync_runs)').all().some(column=>column.name==='ownerPid'))db.exec('ALTER TABLE portal_sync_runs ADD COLUMN ownerPid INTEGER');
-  if(db.prepare("SELECT value FROM portal_metadata WHERE key='page_fts_version'").get()?.value!=='2') {
-    db.exec("DELETE FROM portal_pages_fts; INSERT INTO portal_pages_fts(url,title,body) SELECT url,title,body FROM portal_pages WHERE status='fetched' AND body!='' AND (kind IN ('guide','detail') OR section='gallery')");
-    db.prepare("INSERT INTO portal_metadata(key,value) VALUES ('page_fts_version','2') ON CONFLICT(key) DO UPDATE SET value='2'").run();
+  const pageColumns=new Set(db.prepare('PRAGMA table_info(portal_pages)').all().map(column=>column.name));
+  for(const [name,definition] of [['contentType',"TEXT NOT NULL DEFAULT ''"],['bytes','INTEGER NOT NULL DEFAULT 0'],['extractor',"TEXT NOT NULL DEFAULT ''"]]) {
+    if(!pageColumns.has(name))db.exec(`ALTER TABLE portal_pages ADD COLUMN ${name} ${definition}`);
+  }
+  if(db.prepare("SELECT value FROM portal_metadata WHERE key='page_fts_version'").get()?.value!=='3') {
+    db.exec("DELETE FROM portal_pages_fts; INSERT INTO portal_pages_fts(url,title,body) SELECT url,title,body FROM portal_pages WHERE status='fetched' AND body!='' AND (kind IN ('guide','detail','attachment') OR section='gallery')");
+    db.prepare("INSERT INTO portal_metadata(key,value) VALUES ('page_fts_version','3') ON CONFLICT(key) DO UPDATE SET value='3'").run();
   }
   const portal={
     queue(url,kind,section,discoveredFrom='',refresh=false) {
@@ -58,13 +62,20 @@ export function createPortalStore(db) {
       if(refresh)db.prepare("UPDATE portal_pages SET status='pending',error=NULL WHERE url=? AND status!='pending'").run(url);
       else if(discoveredFrom)db.prepare("UPDATE portal_pages SET status='pending',error=NULL WHERE url=? AND status IN ('empty','skipped')").run(url);
     },
-    refreshPages(includeDetails=false) {db.prepare(`UPDATE portal_pages SET status='pending',error=NULL WHERE kind IN ('guide','listing'${includeDetails?",'detail'":''}) AND status NOT IN ('empty','skipped')`).run();},
+    refreshPages(includeDetails=false,includeAttachments=false) {db.prepare(`UPDATE portal_pages SET status='pending',error=NULL WHERE kind IN ('guide','listing'${includeDetails?",'detail'":''}${includeAttachments?",'attachment'":''}) AND status NOT IN ('empty','skipped')`).run();},
     nextPage(includeDetails=false,includeAttachments=false,runStarted='') {
       portal.reconcilePagination();
       const kinds=['listing','guide',...(includeDetails?['detail']:[]),...(includeAttachments?['attachment']:[])];
       return db.prepare(`SELECT * FROM portal_pages WHERE kind IN (${kinds.map(()=>'?').join(',')}) AND
         (status='pending' OR (status IN ('failed','blocked') AND (attemptedAt IS NULL OR attemptedAt<?)))
         ORDER BY CASE kind WHEN 'guide' THEN 0 WHEN 'listing' THEN 1 WHEN 'detail' THEN 2 ELSE 3 END,rowid LIMIT 1`).get(...kinds,runStarted);
+    },
+    // Attachments run in their own phase so a large PDF never blocks the page
+    // queue. Failed/blocked files wait for a cooldown and stop after 3 tries.
+    nextAttachment(cutoff=new Date(Date.now()-300000).toISOString()) {
+      return db.prepare(`SELECT * FROM portal_pages WHERE kind='attachment' AND
+        (status IN ('pending','unread') OR (status IN ('failed','blocked') AND attemptedAt<? AND attempts<3))
+        ORDER BY rowid LIMIT 1`).get(cutoff);
     },
     getPage(url) {return db.prepare('SELECT * FROM portal_pages WHERE url=?').get(url);},
     get(id) {return db.prepare('SELECT * FROM portal_items WHERE id=?').get(id);},
@@ -88,7 +99,7 @@ export function createPortalStore(db) {
           .run(empty?'empty':truncated?'partial':'fetched',title,body,digest(body),new Date().toISOString(),new Date().toISOString(),truncated?'Isi melampaui batas teks; halaman hanya terbaca sebagian dan tidak dipakai sebagai bukti lengkap.':null,url);
         db.prepare('DELETE FROM portal_pages_fts WHERE url=?').run(url);
         const page=portal.getPage(url);
-        if(!truncated && (['guide','detail'].includes(page.kind) || page.section==='gallery') && body)db.prepare('INSERT INTO portal_pages_fts(url,title,body) VALUES (?,?,?)').run(url,title,body);
+        if(!truncated && (['guide','detail','attachment'].includes(page.kind) || page.section==='gallery') && body)db.prepare('INSERT INTO portal_pages_fts(url,title,body) VALUES (?,?,?)').run(url,title,body);
         for(const item of items)portal.putItem(item);
         for(const link of links)portal.queue(link.url,link.kind,link.section,url);
         if(reportedTotal)portal.metadata(`reported:${page.section}`,String(Math.max(reportedTotal,Number(portal.metadata(`reported:${page.section}`)||0))));
@@ -98,6 +109,25 @@ export function createPortalStore(db) {
     fail(url,error,status='failed') {
       db.prepare('UPDATE portal_pages SET status=?,attemptedAt=?,error=?,attempts=attempts+1 WHERE url=?').run(status,new Date().toISOString(),String(error).slice(0,500),url);
     },
+    // Automatic extraction is recorded as a reading step, never as human
+    // verification. Truncated text is stored for inspection but left out of FTS.
+    saveAttachment(url,{format='pdf',text='',truncated=false,contentType='',bytes=0,detail={}}) {
+      const now=new Date().toISOString(),empty=!text;
+      const status=empty?'empty':truncated?'partial':'fetched';
+      const note=empty?'Tidak ada teks yang dapat diekstrak; kemungkinan hasil pindai. OCR tidak dijalankan.'
+        :truncated?'Sebagian isi lampiran dipotong karena melebihi batas teks; tidak dipakai untuk pencarian.'
+        :null;
+      const extractor=`${String(format).toUpperCase()}${detail.pages?` · ${detail.pages} halaman`:detail.rows?` · ${detail.rows} baris`:''}`;
+      db.exec('BEGIN');
+      try {
+        db.prepare(`UPDATE portal_pages SET status=?,body=?,hash=?,attemptedAt=?,fetchedAt=?,error=?,attempts=attempts+1,
+          contentType=?,bytes=?,extractor=? WHERE url=?`).run(status,text,digest(text),now,now,note,String(contentType).slice(0,200),bytes,extractor,url);
+        db.prepare('DELETE FROM portal_pages_fts WHERE url=?').run(url);
+        if(status==='fetched' && text)db.prepare('INSERT INTO portal_pages_fts(url,title,body) SELECT url,title,body FROM portal_pages WHERE url=?').run(url);
+        db.exec('COMMIT');
+      } catch(error) {db.exec('ROLLBACK');throw error;}
+    },
+    failAttachment(url,error,status='failed') {portal.fail(url,error,status);},
     metadata(key,value) {
       if(value!==undefined)db.prepare('INSERT INTO portal_metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);
       return db.prepare('SELECT value FROM portal_metadata WHERE key=?').get(key)?.value;
@@ -166,19 +196,31 @@ export function createPortalStore(db) {
       const datasets=db.prepare("SELECT count(*) AS total FROM portal_items WHERE url LIKE 'https://satudata.depok.go.id/User/detail_dataset/%'").get().total;
       const reportedDatasets=Number(portal.metadata('reported:dataset') || 0);
       const lastRun=db.prepare('SELECT * FROM portal_sync_runs ORDER BY startedAt DESC,rowid DESC LIMIT 1').get() || null;
+      const attachments=status=>pages.filter(row=>row.kind==='attachment' && row.status===status).reduce((sum,row)=>sum+row.total,0);
       return {items:sections.reduce((sum,row)=>sum+row.total,0),sections,pages,
         contentPages:db.prepare("SELECT count(*) AS total FROM portal_pages WHERE status='fetched' AND (kind IN ('guide','detail') OR section='gallery')").get().total,
-        fetched:count('fetched'),empty:count('empty'),skipped:count('skipped'),partial:count('partial'),pending:count('pending'),failed:count('failed'),blocked:count('blocked'),external:count('external'),unreadAttachments:pages.filter(row=>row.kind==='attachment' && row.status!=='fetched').reduce((sum,row)=>sum+row.total,0),
+        fetched:count('fetched'),empty:count('empty'),skipped:count('skipped'),partial:count('partial'),pending:count('pending'),failed:count('failed'),blocked:count('blocked'),external:count('external'),
+        readAttachments:attachments('fetched'),partialAttachments:attachments('partial'),skippedAttachments:attachments('skipped'),emptyAttachments:attachments('empty'),
+        unreadAttachments:pages.filter(row=>row.kind==='attachment' && ['pending','unread'].includes(row.status)).reduce((sum,row)=>sum+row.total,0),
         datasets,reportedDatasets,websiteComplete:false,lastRun,
         robots:portal.metadata('robots') || 'not_checked',
+        // Reading statistics are never presented as human review.
         issues:db.prepare("SELECT url,kind,status,error,attemptedAt FROM portal_pages WHERE status IN ('failed','blocked','unread','partial') ORDER BY attemptedAt DESC LIMIT 12").all(),
-        note:'Inventaris dari halaman publik yang dijangkau, bukan bukti seluruh website sudah dipahami. Lampiran dan dashboard eksternal tidak otomatis terbaca.'};
+        note:'Inventaris dari halaman publik yang dijangkau, bukan bukti seluruh website sudah dipahami. Lampiran PDF/XLSX hanya dibaca bila opsi ekstraksi dijalankan; gambar, CSV, .xls, dan dashboard eksternal tidak diekstrak.'};
     },
     card(item) {
-      const page=portal.getPage(item.url),read=page?.status==='fetched' && (['guide','detail'].includes(page.kind) || page.section==='gallery');
-      return {id:item.id,documentId:item.id,title:item.title,url:item.url,publisher:item.publisher || 'Portal Satu Data Kota Depok',status:read?'portal-read':'catalogued',
-        year:null,region:null,version:1,retrievedAt:item.lastSeenAt,excerpt:item.description,kind:item.section,format:item.format,
-        periodLabel:item.periodLabel,contentStatus:read?'read':'catalogue_only',discoveredFrom:item.discoveredFrom};
+      const url=item?.url;if(!url)return null;
+      const page=portal.getPage(url);
+      // Search may surface an attachment that has no catalog card of its own.
+      const entry=item?.title?item:{id:`portal-${digest(url).slice(0,24)}`,url,title:page?.title || url,publisher:'',description:(page?.body || '').slice(0,1200),
+        section:page?.section || 'dataset',format:page?.kind==='attachment'?'Berkas':'HTML',periodLabel:'',discoveredFrom:page?.discoveredFrom || '',lastSeenAt:page?.fetchedAt || ''};
+      const read=page?.status==='fetched' && (['guide','detail'].includes(page.kind) || page.section==='gallery');
+      const attachment=page?.kind==='attachment' && ['fetched','partial'].includes(page.status);
+      const contentStatus=read?'read':attachment?(page.status==='partial'?'attachment_partial':'attachment_read'):'catalogue_only';
+      return {id:entry.id,documentId:entry.id,title:entry.title,url:entry.url,publisher:entry.publisher || 'Portal Satu Data Kota Depok',
+        status:read?'portal-read':attachment?'attachment-read':'catalogued',year:null,region:null,version:1,retrievedAt:entry.lastSeenAt,
+        excerpt:entry.description,kind:entry.section,format:entry.format,periodLabel:entry.periodLabel,contentStatus,
+        contentType:page?.contentType || '',bytes:page?.bytes || 0,extractor:page?.extractor || '',discoveredFrom:entry.discoveredFrom};
     },
     source(id) {
       const item=portal.get(id);if(!item)return null;
@@ -195,10 +237,11 @@ export function createPortalStore(db) {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET url=excluded.url,title=excluded.title,section=excluded.section,
         publisher=excluded.publisher,description=excluded.description,periodLabel=excluded.periodLabel,format=excluded.format,
         discoveredFrom=excluded.discoveredFrom,firstSeenAt=excluded.firstSeenAt,lastSeenAt=excluded.lastSeenAt,identityKey=excluded.identityKey`);
-      const insertPage=db.prepare(`INSERT INTO portal_pages(url,kind,section,discoveredFrom,status,title,body,hash,attemptedAt,fetchedAt,error,attempts)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET kind=excluded.kind,section=excluded.section,
+      const insertPage=db.prepare(`INSERT INTO portal_pages(url,kind,section,discoveredFrom,status,title,body,hash,attemptedAt,fetchedAt,error,attempts,contentType,bytes,extractor)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET kind=excluded.kind,section=excluded.section,
         discoveredFrom=excluded.discoveredFrom,status=excluded.status,title=excluded.title,body=excluded.body,hash=excluded.hash,
-        attemptedAt=excluded.attemptedAt,fetchedAt=excluded.fetchedAt,error=excluded.error,attempts=excluded.attempts`);
+        attemptedAt=excluded.attemptedAt,fetchedAt=excluded.fetchedAt,error=excluded.error,attempts=excluded.attempts,
+        contentType=excluded.contentType,bytes=excluded.bytes,extractor=excluded.extractor`);
       db.exec('BEGIN');
       try {
         for(const item of items) {
@@ -207,7 +250,8 @@ export function createPortalStore(db) {
           counts.items++;
         }
         for(const page of pages) {
-          insertPage.run(page.url,page.kind,page.section,page.discoveredFrom,page.status,page.title,page.body,page.hash,page.attemptedAt,page.fetchedAt,page.error,page.attempts);
+          insertPage.run(page.url,page.kind,page.section,page.discoveredFrom,page.status,page.title,page.body,page.hash,page.attemptedAt,page.fetchedAt,page.error,page.attempts,
+            page.contentType || '',page.bytes || 0,page.extractor || '');
           counts.pages++;
         }
         for(const run of runs) {
@@ -223,7 +267,9 @@ export function createPortalStore(db) {
         db.exec('DELETE FROM portal_items_fts');
         db.exec("INSERT INTO portal_items_fts(id,title,publisher,description) SELECT id,title,publisher,description||' '||periodLabel FROM portal_items");
         db.exec('DELETE FROM portal_pages_fts');
-        db.exec("INSERT INTO portal_pages_fts(url,title,body) SELECT url,title,body FROM portal_pages WHERE status='fetched' AND body!='' AND (kind IN ('guide','detail') OR section='gallery')");
+        db.exec("INSERT INTO portal_pages_fts(url,title,body) SELECT url,title,body FROM portal_pages WHERE status='fetched' AND body!='' AND (kind IN ('guide','detail','attachment') OR section='gallery')");
+        // The FTS rebuild above is authoritative for this app version.
+        portal.metadata('page_fts_version','3');
         db.exec('COMMIT');
       } catch(error) {db.exec('ROLLBACK');throw error;}
       return counts;

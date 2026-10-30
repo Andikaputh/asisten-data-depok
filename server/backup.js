@@ -4,7 +4,9 @@ import { PORTAL_ORIGIN, PORTAL_SECTIONS } from './portal-sync.js';
 import { APP_VERSION } from './version.js';
 
 export const BACKUP_FORMAT = 'asisten-data-depok-backup';
-export const BACKUP_VERSION = 2;
+// Version 3 adds attachment extraction metadata (content type, bytes, extractor).
+// Older backups remain readable because those fields are optional.
+export const BACKUP_VERSION = 3;
 // A local backup can include thousands of catalog pages; the HTTP endpoint
 // refuses anything larger so a mistaken upload cannot exhaust memory.
 export const MAX_BACKUP_BYTES = 64 * 1024 * 1024;
@@ -157,6 +159,9 @@ function normalizePage(raw, index) {
     fetchedAt: timestamp(raw.fetchedAt, `${label}: waktu pengambilan`),
     error: nullable(raw.error, 500, `${label}: galat`),
     attempts: integer(raw.attempts, 0, 1_000_000, `${label}: jumlah percobaan`, 0),
+    contentType: text(raw.contentType, 200, `${label}: tipe isi`),
+    bytes: integer(raw.bytes, 0, 100 * 1024 * 1024, `${label}: ukuran berkas`, 0),
+    extractor: text(raw.extractor, 120, `${label}: ekstraktor`),
   };
 }
 
@@ -262,6 +267,7 @@ export function buildBackup(store) {
       portalItems: items.length,
       portalPages: pages.length,
       contentPages: pages.filter(page => page.status === 'fetched' && page.body && (['guide','detail'].includes(page.kind) || page.section === 'gallery')).length,
+      attachmentPages: pages.filter(page => page.kind === 'attachment' && ['fetched','partial'].includes(page.status)).length,
     },
     documents,
     observations,
@@ -315,6 +321,7 @@ function restoreWarnings(backup, asUnverified, dryRun) {
     warnings.push('Status verifikasi ikut dipulihkan dari berkas. Hash menjaga keutuhan isi, bukan membuktikan peninjauan manusia: pulihkan hanya cadangan milik sendiri.');
   }
   if (backup.portal.pages.length) warnings.push('Halaman portal dipulihkan apa adanya; status "terbaca" tetap berarti ekstraksi otomatis, bukan peninjauan manual.');
+  if (backup.portal.pages.some(page => page.kind === 'attachment')) warnings.push('Teks lampiran dipulihkan sebagai hasil ekstraksi otomatis. Periksa berkas asli sebelum memakai angka atau kutipan; OCR tidak dijalankan.');
   if (backup.portal.items.length) warnings.push('Entri katalog tidak menjadi bukti nilai statistik; angka tetap hanya dibaca dari tabel yang ditinjau.');
   if (dryRun) warnings.push('Mode uji coba: tidak ada data yang ditulis.');
   return warnings;

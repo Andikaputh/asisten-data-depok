@@ -27,7 +27,7 @@ export function hasTopicEvidence(question,candidates) {
 export function coverageSummary(store) {
   const value=store.portal.coverage();
   return {items:value.items,datasets:value.datasets,reportedDatasets:value.reportedDatasets,readPages:value.contentPages,
-    failed:value.failed+value.blocked,partial:value.partial,unreadAttachments:value.unreadAttachments,websiteComplete:false,
+    failed:value.failed+value.blocked,partial:value.partial,unreadAttachments:value.unreadAttachments,readAttachments:value.readAttachments,websiteComplete:false,
     lastSyncAt:value.lastRun?.finishedAt || value.lastRun?.startedAt || null};
 }
 const sectionNames={dataset:'Dataset',publication:'Produk Sektoral',bps:'Produk BPS',infographic:'Infografis',insight:'Data Insight',organization:'Organisasi',category:'Kategori',gallery:'Galeri'};
@@ -61,7 +61,7 @@ export function portalNavigation(store,question,{numeric=false,definition=false}
   }
   if(/cakupan|terindeks|(?:kamu|asisten).*(?:tahu|paham|memahami|mengerti|menguasai).*(?:semua|seluruh)|(?:semua|seluruh).*(?:sudah dibaca|sudah dipahami)|(?:berapa|jumlah).*(?:dataset|sumber|katalog).*(?:portal|website|indeks)/i.test(question)) {
     const value=coverageSummary(store);
-    return {status:'assistance',answer:`Indeks lokal saat ini mencatat ${value.datasets} entri dataset${value.reportedDatasets?`; label katalog portal yang terakhir dibaca menyebut ${value.reportedDatasets} dataset`:''}. Ada ${value.items} entri navigasi dan sumber keseluruhan. Ini bukan berarti semua isinya sudah dipahami: ${value.unreadAttachments} lampiran belum diekstrak, ${value.partial} halaman terbaca sebagian, dan ${value.failed} halaman gagal atau dibatasi. Saya hanya menjawab berdasarkan bukti yang tersedia.`,sources:navigationSources(store,['dataset']),method:'portal-coverage'};
+    return {status:'assistance',answer:`Indeks lokal saat ini mencatat ${value.datasets} entri dataset${value.reportedDatasets?`; label katalog portal yang terakhir dibaca menyebut ${value.reportedDatasets} dataset`:''}. Ada ${value.items} entri navigasi dan sumber keseluruhan. Ini bukan berarti semua isinya sudah dipahami: ${value.unreadAttachments} lampiran belum diekstrak, ${value.readAttachments} lampiran sudah diekstrak otomatis tetapi belum ditinjau, ${value.partial} halaman terbaca sebagian, dan ${value.failed} halaman gagal atau dibatasi. Saya hanya menjawab berdasarkan bukti yang tersedia.`,sources:navigationSources(store,['dataset']),method:'portal-coverage'};
   }
   if(/apa.*(?:ada|bisa|fitur).*(?:website|portal|situs)|(?:menu|halaman|fitur).*(?:apa|saja)|(?:cara|bagaimana).*(?:menggunakan|pakai).*(?:portal|website)|kamu bisa apa/i.test(question)) {
     return {status:'assistance',answer:'Saya membantu menelusuri Portal Satu Data Depok: mencari dataset, publikasi, infografis, dashboard, organisasi, kategori, serta panduan metadata dan standar data. Ceritakan topik yang kamu butuhkan; jika belum jelas saya bantu mempersempit tahun atau wilayah. Saya tidak menjawab topik umum di luar portal.',sources:navigationSources(store,['dataset','publication','organization','category','metadata','insight']),method:'portal-navigation'};
@@ -99,9 +99,12 @@ export async function portalContentAnswer(store,question,{useModel=false,config,
   const sentences=rankSentences(hits,question).filter(item=>item.text.length<=800).slice(0,3);
   if(!sentences.length)return null;
   const used=[...new Map(sentences.map(item=>[item.source.page.url,item.source.page])).values()];
-  const sources=used.map(page=>store.portal.card(store.portal.getByUrl(page.url)));
+  const sources=used.map(page=>store.portal.card(store.portal.getByUrl(page.url) || {url:page.url})).filter(Boolean);
+  const fromAttachments=used.some(page=>page.kind==='attachment');
   let answer='Berikut bagian halaman portal yang sesuai dengan pertanyaanmu. Periksa konteks lengkap melalui kartu sumber.',mode='extractive';
-  let notice='Kutipan diambil dari halaman publik yang berhasil dibaca otomatis; bukan pengesahan atau hasil peninjauan manual terhadap semua isinya.';
+  let notice=fromAttachments
+    ? 'Sebagian kutipan berasal dari lampiran PDF/XLSX yang diekstrak otomatis, belum ditinjau manual. Periksa berkas asli untuk konteks, satuan, dan angka; OCR tidak dijalankan.'
+    : 'Kutipan diambil dari halaman publik yang berhasil dibaca otomatis; bukan pengesahan atau hasil peninjauan manual terhadap semua isinya.';
   if(useModel && config && modelReady(config)) {
     try {
       const composed=await composeLocalAnswer(question,sentences,config);

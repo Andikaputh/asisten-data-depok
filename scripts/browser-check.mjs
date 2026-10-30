@@ -107,7 +107,7 @@ try {
   const portal=store.portal;
   portal.putItem({url:'https://satudata.depok.go.id/User/detail_dataset/fixture-anak',title:'Jumlah Anak Penyandang Disabilitas',section:'dataset',publisher:'Instansi pengujian',description:'Entri katalog pengujian; isi belum dibaca.',discoveredFrom:'https://satudata.depok.go.id/User/dataset'});
   await mobile.locator('.nav-item[data-view="portal"]').click();
-  await mobile.locator('#portal-stats').filter({hasText:'Lampiran belum diekstrak'}).waitFor();
+  await mobile.locator('#portal-stats').filter({hasText:'Lampiran menunggu ekstraksi'}).waitFor();
   await mobile.locator('#portal-query').fill('anak disabilitas');
   await mobile.locator('#portal-items .source-row').filter({hasText:'Jumlah Anak Penyandang Disabilitas'}).waitFor();
   await mobile.locator('#portal-items .icon-button').first().click();
@@ -116,6 +116,22 @@ try {
   await mobile.locator('.dialog-header .close-dialog').click();
   assert.equal(await mobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   console.log('PASS Cakupan portal mobile: pencarian inventaris, status katalog, tanpa verifikasi palsu atau overflow');
+
+  // A completed attachment extraction is presented as automatic reading, not review.
+  const attachmentUrl='https://satudata.depok.go.id/upload/file/profil-browser.pdf';
+  portal.putItem({url:attachmentUrl,title:'Profil Kesehatan Browser',section:'publication',format:'PDF',description:'Lampiran uji browser.',discoveredFrom:'https://satudata.depok.go.id/User/produk_bidangstatistik'});
+  portal.queue(attachmentUrl,'attachment','publication');
+  portal.saveAttachment(attachmentUrl,{format:'pdf',text:'Profil kesehatan browser memuat indikator uji.',contentType:'application/pdf',bytes:2048,detail:{pages:2}});
+  await mobile.locator('#portal-query').fill('profil kesehatan browser');
+  await mobile.locator('#portal-items .source-row').filter({hasText:'Profil Kesehatan Browser'}).waitFor();
+  assert.match(await mobile.locator('#portal-items .source-row').first().innerText(),/Lampiran terbaca/);
+  await mobile.locator('#portal-items .icon-button').first().click();
+  await mobile.locator('#dialog-content .verification-warn').filter({hasText:'isi lampiran sudah diekstrak otomatis'}).waitFor();
+  assert.match(await mobile.locator('#dialog-content').innerText(),/belum ditinjau manual/);
+  assert.match(await mobile.locator('#dialog-content').innerText(),/Ekstraksi: PDF/);
+  await mobile.locator('.dialog-header .close-dialog').click();
+  assert.equal(await mobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  console.log('PASS Lampiran terbaca dibedakan dari verifikasi manual di kartu sumber');
 
   await page.goto(base+'/chat');
   await page.locator('#portal-coverage').waitFor({state:'visible'});

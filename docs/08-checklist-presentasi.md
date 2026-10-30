@@ -35,7 +35,7 @@ Pencarian katalog tidak menunggu LLM: uji revisi 0.3 mencatat sekitar 27–111 m
 - `generated`: model menyusun jawaban yang lolos pemeriksaan mekanis.
 - `model-assisted`: model hanya memilih kutipan; komposisi gagal dan kalimat model tidak ditampilkan.
 - `extractive`: pembacaan tabel atau kutipan tanpa generasi model.
-- Inventaris mencakup banyak URL dataset, bukan otomatis seluruh isi dataset. Ekstraksi PDF/XLSX umum, OCR gambar, isi dashboard eksternal, dan perhitungan lintas baris belum didukung.
+- Inventaris mencakup banyak URL dataset, bukan otomatis seluruh isi dataset. Ekstraksi teks PDF/XLSX dilakukan bertahap dan berstatus baca otomatis belum ditinjau (`attachment-read`). OCR gambar, dokumen .xls lama, isi dashboard eksternal, dan perhitungan lintas baris belum didukung.
 - Validasi angka/rujukan tidak membuktikan seluruh makna jawaban benar; evaluasi manusia tetap diperlukan.
 
 ## Jika ada masalah

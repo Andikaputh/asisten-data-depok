@@ -5,7 +5,7 @@ const args=process.argv.slice(2),option=name=>args.find(value=>value.startsWith(
 const store=createStore(),abort=new AbortController();
 process.once('SIGINT',()=>abort.abort());
 try {
-  const result=await syncPortal(store,{maxPages:Number(option('max-pages') || 40),delayMs:Number(option('delay') || 900),includeDetails:args.includes('--details'),refresh:args.includes('--refresh'),signal:abort.signal,
+  const result=await syncPortal(store,{maxPages:Number(option('max-pages') || 40),delayMs:Number(option('delay') || 900),includeDetails:args.includes('--details'),includeAttachments:args.includes('--attachments'),maxAttachments:Number(option('max-attachments') || 5),refresh:args.includes('--refresh'),signal:abort.signal,
     onProgress:progress=>{if(progress.processed===1 || progress.processed%20===0)console.log(JSON.stringify(progress));}});
   console.log(JSON.stringify(result,null,2));
   if(result.lastRun?.status==='failed')process.exitCode=1;

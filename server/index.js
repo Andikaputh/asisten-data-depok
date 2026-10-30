@@ -72,12 +72,13 @@ export function createApp({ store = createStore(), config:fixedConfig, portalFet
       if(pathname==='/api/portal/sync' && req.method==='POST') {
         const body=await readJson(req);
         if(!body || typeof body!=='object' || Array.isArray(body))throw new UserError('Isi permintaan sinkronisasi tidak valid.');
-        const maxPages=body.maxPages ?? 40;
-        if(!Number.isInteger(maxPages) || maxPages<1 || maxPages>150 || (body.includeDetails!==undefined && typeof body.includeDetails!=='boolean') || (body.refresh!==undefined && typeof body.refresh!=='boolean'))throw new UserError('Batch portal harus 1–150 halaman; opsi detail/refresh berupa boolean.');
+        const maxPages=body.maxPages ?? 40,maxAttachments=body.maxAttachments ?? 5;
+        if(!Number.isInteger(maxPages) || maxPages<1 || maxPages>150 || !Number.isInteger(maxAttachments) || maxAttachments<1 || maxAttachments>20
+          || (body.includeDetails!==undefined && typeof body.includeDetails!=='boolean') || (body.includeAttachments!==undefined && typeof body.includeAttachments!=='boolean') || (body.refresh!==undefined && typeof body.refresh!=='boolean'))throw new UserError('Batch portal harus 1-150 halaman dan 1-20 lampiran; opsi detail/lampiran/refresh berupa boolean.');
         store.portal.recoverRuns();
         if(portalController || store.portal.coverage().lastRun?.status==='running')throw new UserError('Sinkronisasi portal sedang berjalan; tidak memulai job ganda.',409);
         portalController=new AbortController();
-        portalTask=syncPortal(store,{fetcher:portalFetcher,maxPages,includeDetails:body.includeDetails===true,refresh:body.refresh===true,signal:portalController.signal})
+        portalTask=syncPortal(store,{fetcher:portalFetcher,maxPages,includeDetails:body.includeDetails===true,includeAttachments:body.includeAttachments===true,maxAttachments,refresh:body.refresh===true,signal:portalController.signal})
           .catch(()=>{}).finally(()=>{portalController=null;portalTask=null;});
         return json(res,202,{accepted:true,note:'Sinkronisasi berjalan di belakang layar; periksa cakupan dan kegagalan pada status portal.'});
       }
